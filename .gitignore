@@ -4,3 +4,7 @@ DerivedData/
 xcuserdata/
 *.xcuserstate
 *.xcscmblueprint
+.gradle/
+local.properties
+.idea/
+*.iml
