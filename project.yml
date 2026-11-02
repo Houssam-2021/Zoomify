@@ -1,0 +1,23 @@
+# Optional: regenerate Zoomify.xcodeproj with XcodeGen (`brew install xcodegen && xcodegen`).
+name: Zoomify
+options:
+  bundleIdPrefix: com.zoomify
+  deploymentTarget:
+    iOS: "17.0"
+targets:
+  Zoomify:
+    type: application
+    platform: iOS
+    sources:
+      - path: Zoomify
+        excludes: [Info.plist]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.zoomify.camera
+        INFOPLIST_FILE: Zoomify/Info.plist
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Zoomify
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        MTL_FAST_MATH: YES

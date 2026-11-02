@@ -1,0 +1,292 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		5A0F00000000000000000002 /* ZoomifyApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0F00000000000000000001 /* ZoomifyApp.swift */; };
+		5A0F00000000000000000004 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0F00000000000000000003 /* ContentView.swift */; };
+		5A0F00000000000000000006 /* CameraModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0F00000000000000000005 /* CameraModel.swift */; };
+		5A0F00000000000000000008 /* CameraService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0F00000000000000000007 /* CameraService.swift */; };
+		5A0F0000000000000000000A /* CaptureTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0F00000000000000000009 /* CaptureTypes.swift */; };
+		5A0F0000000000000000000C /* ZoomController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0F0000000000000000000B /* ZoomController.swift */; };
+		5A0F0000000000000000000E /* ZoomControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0F0000000000000000000D /* ZoomControls.swift */; };
+		5A0F00000000000000000010 /* PreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0F0000000000000000000F /* PreviewView.swift */; };
+		5A0F00000000000000000012 /* PreviewRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0F00000000000000000011 /* PreviewRenderer.swift */; };
+		5A0F00000000000000000014 /* MovieRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0F00000000000000000013 /* MovieRecorder.swift */; };
+		5A0F00000000000000000016 /* PhotoCaptureProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0F00000000000000000015 /* PhotoCaptureProcessor.swift */; };
+		5A0F00000000000000000018 /* Shaders.metal in Sources */ = {isa = PBXBuildFile; fileRef = 5A0F00000000000000000017 /* Shaders.metal */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		5A0F00000000000000000001 /* ZoomifyApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomifyApp.swift; sourceTree = "<group>"; };
+		5A0F00000000000000000003 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		5A0F00000000000000000005 /* CameraModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraModel.swift; sourceTree = "<group>"; };
+		5A0F00000000000000000007 /* CameraService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraService.swift; sourceTree = "<group>"; };
+		5A0F00000000000000000009 /* CaptureTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureTypes.swift; sourceTree = "<group>"; };
+		5A0F0000000000000000000B /* ZoomController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomController.swift; sourceTree = "<group>"; };
+		5A0F0000000000000000000D /* ZoomControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomControls.swift; sourceTree = "<group>"; };
+		5A0F0000000000000000000F /* PreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewView.swift; sourceTree = "<group>"; };
+		5A0F00000000000000000011 /* PreviewRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewRenderer.swift; sourceTree = "<group>"; };
+		5A0F00000000000000000013 /* MovieRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MovieRecorder.swift; sourceTree = "<group>"; };
+		5A0F00000000000000000015 /* PhotoCaptureProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoCaptureProcessor.swift; sourceTree = "<group>"; };
+		5A0F00000000000000000017 /* Shaders.metal */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; path = Shaders.metal; sourceTree = "<group>"; };
+		5A0F00000000000000000019 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		5A0F0000000000000000001A /* Zoomify.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Zoomify.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		5A0F00000000000000000021 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		5A0F0000000000000000001B = {
+			isa = PBXGroup;
+			children = (
+				5A0F0000000000000000001C /* Zoomify */,
+				5A0F0000000000000000001D /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		5A0F0000000000000000001C /* Zoomify */ = {
+			isa = PBXGroup;
+			children = (
+				5A0F00000000000000000001 /* ZoomifyApp.swift */,
+				5A0F00000000000000000003 /* ContentView.swift */,
+				5A0F00000000000000000005 /* CameraModel.swift */,
+				5A0F00000000000000000007 /* CameraService.swift */,
+				5A0F00000000000000000009 /* CaptureTypes.swift */,
+				5A0F0000000000000000000B /* ZoomController.swift */,
+				5A0F0000000000000000000D /* ZoomControls.swift */,
+				5A0F0000000000000000000F /* PreviewView.swift */,
+				5A0F00000000000000000011 /* PreviewRenderer.swift */,
+				5A0F00000000000000000013 /* MovieRecorder.swift */,
+				5A0F00000000000000000015 /* PhotoCaptureProcessor.swift */,
+				5A0F00000000000000000017 /* Shaders.metal */,
+				5A0F00000000000000000019 /* Info.plist */,
+			);
+			path = Zoomify;
+			sourceTree = "<group>";
+		};
+		5A0F0000000000000000001D /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				5A0F0000000000000000001A /* Zoomify.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		5A0F0000000000000000001E /* Zoomify */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5A0F00000000000000000024 /* Build configuration list for PBXNativeTarget "Zoomify" */;
+			buildPhases = (
+				5A0F00000000000000000020 /* Sources */,
+				5A0F00000000000000000021 /* Frameworks */,
+				5A0F00000000000000000022 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Zoomify;
+			productName = Zoomify;
+			productReference = 5A0F0000000000000000001A /* Zoomify.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		5A0F0000000000000000001F /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					5A0F0000000000000000001E = {
+						CreatedOnToolsVersion = 16.0;
+					};
+				};
+			};
+			buildConfigurationList = 5A0F00000000000000000023 /* Build configuration list for PBXProject "Zoomify" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 5A0F0000000000000000001B;
+			productRefGroup = 5A0F0000000000000000001D /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				5A0F0000000000000000001E /* Zoomify */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		5A0F00000000000000000022 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		5A0F00000000000000000020 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5A0F00000000000000000002 /* ZoomifyApp.swift in Sources */,
+				5A0F00000000000000000004 /* ContentView.swift in Sources */,
+				5A0F00000000000000000006 /* CameraModel.swift in Sources */,
+				5A0F00000000000000000008 /* CameraService.swift in Sources */,
+				5A0F0000000000000000000A /* CaptureTypes.swift in Sources */,
+				5A0F0000000000000000000C /* ZoomController.swift in Sources */,
+				5A0F0000000000000000000E /* ZoomControls.swift in Sources */,
+				5A0F00000000000000000010 /* PreviewView.swift in Sources */,
+				5A0F00000000000000000012 /* PreviewRenderer.swift in Sources */,
+				5A0F00000000000000000014 /* MovieRecorder.swift in Sources */,
+				5A0F00000000000000000016 /* PhotoCaptureProcessor.swift in Sources */,
+				5A0F00000000000000000018 /* Shaders.metal in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		5A0F00000000000000000025 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		5A0F00000000000000000026 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		5A0F00000000000000000027 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Zoomify/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Zoomify;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.zoomify.camera;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		5A0F00000000000000000028 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Zoomify/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Zoomify;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.zoomify.camera;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		5A0F00000000000000000023 /* Build configuration list for PBXProject "Zoomify" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5A0F00000000000000000025 /* Debug */,
+				5A0F00000000000000000026 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		5A0F00000000000000000024 /* Build configuration list for PBXNativeTarget "Zoomify" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5A0F00000000000000000027 /* Debug */,
+				5A0F00000000000000000028 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 5A0F0000000000000000001F /* Project object */;
+}
