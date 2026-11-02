@@ -259,7 +259,7 @@ private fun BottomControls(controller: CameraController) {
             onDial = controller::dialChanged,
             onDialEnd = controller::dialEnded,
         )
-        ModeSelector(controller.mode, hidden = controller.isRecording) { controller.setMode(it) }
+        ModeSelector(controller.mode, hidden = controller.isRecording) { controller.switchMode(it) }
         Row(
             modifier = Modifier
                 .fillMaxWidth()

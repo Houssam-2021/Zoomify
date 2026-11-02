@@ -387,7 +387,7 @@ class CameraController(private val activity: ComponentActivity) {
 
     // region Settings
 
-    fun setMode(newMode: CaptureMode) {
+    fun switchMode(newMode: CaptureMode) {
         if (newMode == mode || isRecording) return
         mode = newMode
         bind(keepZoom = true)
