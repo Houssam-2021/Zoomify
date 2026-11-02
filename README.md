@@ -1,5 +1,43 @@
 # Zoomify
 
+Camera apps for **Android** (`android/`, Kotlin + Jetpack Compose + CameraX) and **iOS** (`Zoomify/`, Swift + Metal).
+
+## Android
+
+### Install the APK
+
+Every push that changes `android/` is built by GitHub Actions (`.github/workflows/android.yml`). The workflow
+publishes the APK as the **`android-latest`** release:
+
+1. On your phone, open the repo's **Releases** page, find *Zoomify for Android (latest build)* and download
+   `Zoomify.apk`. It's also attached as an artifact on each Actions run.
+2. Open the file and allow *Install unknown apps* for your browser or file manager when Android asks.
+3. You need Android 11 or newer.
+
+Every build is signed with the same sideloading key (`android/app/zoomify-sideload.keystore`), so a new APK
+installs over the old one.
+
+To build it yourself, open `android/` in Android Studio, or run `./gradlew assembleRelease`.
+
+### What it does
+
+| | |
+|---|---|
+| **Zoom** | A critically damped spring on log₂(zoom), ticked every display frame (up to 120 Hz). Lens buttons glide in about 0.4 s, pinch is smoothed, and dragging sideways across the buttons opens a logarithmic dial. |
+| **Lens switching** | Uses the phone's *logical* multi-camera through `CONTROL_ZOOM_RATIO`, so 0.5× → 1× → tele is one continuous zoom handled by the camera itself. When `LOGICAL_MULTI_CAMERA_ACTIVE_PHYSICAL_ID` changes, the preview hides the jump with a short blur + cross-fade. |
+| **Motion blur** | A CameraX `CameraEffect` (OpenGL ES) adds a radial zoom blur in linear light to the preview, and a zoom-aligned temporal trail that follows zoom speed. Recorded video stays sharp. |
+| **50×** | Uses the camera's own zoom up to its limit. If the phone stops short of 50×, a GPU crop takes over for preview and SDR video, and photos are cropped after capture. |
+| **Photos** | `CAPTURE_MODE_MAXIMIZE_QUALITY`, JPEG quality 100. Options: **MAX RES** (full-sensor resolution, e.g. 50 MP), **HDR** (Ultra HDR JPEG) and **RAW+JPEG** (DNG), each shown only if the phone supports it. |
+| **Video** | 4K 30 fps (falls back to 1080p), with bitrate targets of **50 / 100 / 150 Mb/s** (stock cameras use about 40–50). Also 10-bit **HLG HDR** and stabilisation where supported. |
+
+**Android limits:** colours and processing come from each phone maker's camera pipeline, so they can't be
+identical to an iPhone's. How seamless the 0.5× switch is depends on the phone exposing a logical multi-camera.
+Pixels and recent Samsung Galaxy phones do; some phones only expose the ultra-wide as a separate camera, and then
+the app's zoom starts at 1×. HDR video bypasses the GL effect, which is 8-bit, so in HDR there's no preview blur
+and zoom stops at the phone's own maximum.
+
+## iOS
+
 A native iOS camera app (Swift, SwiftUI, AVFoundation, Metal) built to feel like the stock Camera app:
 smooth eased zoom with radial motion blur, a smooth 0.5× ↔ 1× ↔ tele lens switch, Apple's own photo
 pipeline for the same quality and colours, up to 50× zoom, and 4K 30 fps video at high bitrates.
