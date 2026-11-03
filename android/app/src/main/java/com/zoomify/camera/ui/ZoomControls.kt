@@ -1,198 +1,189 @@
 package com.zoomify.camera.ui
 
-import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.zoomify.camera.DIAL_DP_PER_OCTAVE
 import com.zoomify.camera.ZoomUiState
 import java.util.Locale
-import kotlin.math.ceil
-import kotlin.math.floor
-import kotlin.math.log2
-import kotlin.math.max
+import kotlin.math.abs
+import kotlin.math.exp
+import kotlin.math.ln
 import kotlin.math.roundToInt
 
-val CameraYellow = Color(0xFFFFD60A)
+val Accent = Color(0xFFF5CB69)
+val Glass = Color(0x8019191E)
+val GlassStroke = Color(0x2EFFFFFF)
 
-/** Lens buttons (.5 / 1 / 2 / 5 ...) that turn into a zoom dial when you drag sideways across them. */
+/** Velora's zoom block: caption, big zoom readout, preset pills and the log-scale dial. */
 @Composable
-fun ZoomControls(
-    state: ZoomUiState,
-    onSelect: (Float) -> Unit,
-    onDialStart: () -> Unit,
-    onDial: (Float) -> Unit,
-    onDialEnd: () -> Unit,
-) {
-    var dragTotal by remember { mutableFloatStateOf(0f) }
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(88.dp)
-            .pointerInput(Unit) {
-                detectHorizontalDragGestures(
-                    onDragStart = {
-                        dragTotal = 0f
-                        onDialStart()
-                    },
-                    onDragEnd = { onDialEnd() },
-                    onDragCancel = { onDialEnd() },
-                    onHorizontalDrag = { change, amount ->
-                        change.consume()
-                        dragTotal += amount
-                        onDial(dragTotal.toDp().value)
-                    },
-                )
-            },
-        contentAlignment = Alignment.BottomCenter,
-    ) {
-        Crossfade(targetState = state.dialVisible, animationSpec = tween(200), label = "zoomDial") { dial ->
-            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.BottomCenter) {
-                if (dial) ZoomDial(state) else PresetButtons(state, onSelect)
-            }
+fun ZoomBlock(state: ZoomUiState, compact: Boolean, onZoom: (Float) -> Unit, onPreset: (Float) -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        if (!compact) {
+            Text("FLUID MOTION ZOOM", color = Accent, fontSize = 10.sp, letterSpacing = 2.sp, fontWeight = FontWeight.SemiBold)
         }
+        ZoomReadout(state, if (compact) 40 else 52)
+        PresetRow(state, onPreset)
+        ZoomDial(state, if (compact) 49.dp else 64.dp, showHint = !compact, onZoom = onZoom)
     }
 }
 
 @Composable
-private fun PresetButtons(state: ZoomUiState, onSelect: (Float) -> Unit) {
-    var active = 0
-    state.presets.forEachIndexed { index, preset -> if (state.zoom >= preset * 0.995f) active = index }
-    Row(
-        modifier = Modifier
-            .clip(CircleShape)
-            .background(Color.White.copy(alpha = 0.1f))
-            .padding(3.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        state.presets.forEachIndexed { index, preset ->
-            val isActive = index == active
-            val size by animateDpAsState(if (isActive) 38.dp else 30.dp, label = "presetSize")
+private fun ZoomReadout(state: ZoomUiState, size: Int) {
+    val text = String.format(Locale.US, "%.1f", state.zoom)
+    Text(
+        text = buildAnnotatedString {
+            append(text)
+            withStyle(SpanStyle(fontSize = (size * 0.6f).sp, color = Color.White.copy(alpha = 0.85f))) { append(" ×") }
+        },
+        color = Color.White,
+        fontSize = size.sp,
+        fontWeight = FontWeight.Light,
+        letterSpacing = (-2).sp,
+        modifier = Modifier.padding(bottom = if (size > 45) 10.dp else 4.dp),
+    )
+}
+
+@Composable
+private fun PresetRow(state: ZoomUiState, onPreset: (Float) -> Unit) {
+    // Velora: a preset is selected when the target zoom is within ~4.5% of it.
+    val selected = state.presets.firstOrNull { abs(ln(state.target / it)) < 0.045f }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        for (preset in state.presets) {
+            val isSelected = preset == selected
+            val background by animateColorAsState(if (isSelected) Accent else Color(0x8C1E2025), label = "preset")
             Box(
                 modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .clickable { onSelect(preset) },
+                    .height(38.dp)
+                    .defaultMinSize(minWidth = 44.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(background)
+                    .border(1.dp, if (isSelected) Accent else Color(0x1FFFFFFF), RoundedCornerShape(22.dp))
+                    .clickable { onPreset(preset) }
+                    .padding(horizontal = 10.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(size)
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.5f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = if (isActive) zoomLabel(state.zoom, active = true) else zoomLabel(preset, active = false),
-                        color = if (isActive) CameraYellow else Color.White,
-                        fontSize = if (isActive) 13.sp else 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
+                Text(
+                    presetLabel(preset),
+                    color = if (isSelected) Color(0xFF131313) else Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
             }
         }
     }
 }
 
-/** Logarithmic ruler: every doubling of zoom is the same distance. */
+fun presetLabel(value: Float): String {
+    val text = if (value % 1f == 0f) value.toInt().toString() else String.format(Locale.US, "%.1f", value).removePrefix("0")
+    return "$text×"
+}
+
+/** Absolute log-scale slider like Velora's: touch or drag anywhere to set the zoom. */
 @Composable
-private fun ZoomDial(state: ZoomUiState) {
-    val measurer = rememberTextMeasurer()
-    val labelStyle = TextStyle(color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(
-            text = zoomLabel(state.zoom, active = true),
-            color = CameraYellow,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier
-                .clip(CircleShape)
-                .background(Color.Black.copy(alpha = 0.5f))
-                .padding(horizontal = 10.dp, vertical = 4.dp),
-        )
-        Canvas(
-            Modifier
-                .fillMaxWidth()
-                .height(44.dp)
-        ) {
-            val centerX = size.width / 2
-            val pxPerOctave = DIAL_DP_PER_OCTAVE.dp.toPx()
-            val current = log2(max(state.zoom, 0.01f))
-            val lowest = log2(max(state.minZoom, 0.01f))
-            val highest = log2(max(state.maxZoom, 0.01f))
-
-            for (tick in ceil(lowest * 10).toInt()..floor(highest * 10).toInt()) {
-                val x = centerX + (tick / 10f - current) * pxPerOctave
-                if (x < -4f || x > size.width + 4f) continue
-                val major = tick % 5 == 0
-                val length = if (major) 16.dp.toPx() else 9.dp.toPx()
+private fun ZoomDial(state: ZoomUiState, height: Dp, showHint: Boolean, onZoom: (Float) -> Unit) {
+    val lo = ln(state.minZoom.coerceAtLeast(0.1f))
+    val hi = ln(state.maxZoom.coerceAtLeast(state.minZoom + 0.01f))
+    Box(
+        modifier = Modifier
+            .widthIn(max = 425.dp)
+            .fillMaxWidth()
+            .height(height)
+            .padding(horizontal = 12.dp)
+            .pointerInput(lo, hi) {
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    fun set(x: Float) {
+                        val p = (x / size.width).coerceIn(0f, 1f)
+                        onZoom(exp(lo + p * (hi - lo)))
+                    }
+                    set(down.position.x)
+                    down.consume()
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if (!change.pressed) break
+                        set(change.position.x)
+                        change.consume()
+                    }
+                }
+            },
+    ) {
+        Canvas(Modifier.fillMaxWidth().height(height)) {
+            val w = size.width
+            val top = 10.dp.toPx()
+            val bottom = size.height - 15.dp.toPx()
+            val middle = (top + bottom) / 2
+            val count = 52
+            for (i in 0..count) {
+                val x = w * i / count
+                val big = i == 0 || i == count || i == 17 || i == 27 || i == 40
+                val mid = !big && i % 4 == 0
+                val h = when { big -> 19.dp.toPx(); mid -> 14.dp.toPx(); else -> 9.dp.toPx() }
                 drawLine(
-                    color = Color.White.copy(alpha = if (major) 0.9f else 0.45f),
-                    start = Offset(x, size.height - length),
-                    end = Offset(x, size.height),
-                    strokeWidth = if (major) 1.5.dp.toPx() else 1.dp.toPx(),
+                    color = Color.White.copy(alpha = if (big) 0.73f else 0.34f),
+                    start = Offset(x, middle - h / 2), end = Offset(x, middle + h / 2),
+                    strokeWidth = if (big) 2.dp.toPx() else 1.dp.toPx(),
                 )
             }
-
-            val marks = (state.presets + listOf(10f, 25f, 50f).filter { it <= state.maxZoom + 0.01f }).distinct()
-            for (mark in marks) {
-                val x = centerX + (log2(mark) - current) * pxPerOctave
-                if (x < -20f || x > size.width + 20f) continue
-                val layout = measurer.measure(zoomLabel(mark, active = false), labelStyle)
-                drawText(
-                    textLayoutResult = layout,
-                    topLeft = Offset(
-                        x - layout.size.width / 2f,
-                        size.height - 28.dp.toPx() - layout.size.height / 2f,
-                    ),
-                )
-            }
-
-            drawLine(
-                color = CameraYellow,
-                start = Offset(centerX, size.height - 22.dp.toPx()),
-                end = Offset(centerX, size.height),
-                strokeWidth = 2.dp.toPx(),
+            val p = ((ln(state.zoom.coerceAtLeast(0.1f)) - lo) / (hi - lo)).coerceIn(0f, 1f)
+            val thumbX = p * w
+            val thumbW = 3.dp.toPx()
+            drawRoundRect(
+                color = Accent.copy(alpha = 0.25f),
+                topLeft = Offset(thumbX - thumbW * 2.5f, 1.dp.toPx()),
+                size = Size(thumbW * 5, 45.dp.toPx().coerceAtMost(size.height - 4.dp.toPx())),
+                cornerRadius = CornerRadius(4.dp.toPx()),
+            )
+            drawRoundRect(
+                color = Accent,
+                topLeft = Offset(thumbX - thumbW / 2, 3.dp.toPx()),
+                size = Size(thumbW, 41.dp.toPx().coerceAtMost(size.height - 8.dp.toPx())),
+                cornerRadius = CornerRadius(2.dp.toPx()),
+            )
+        }
+        if (showHint) {
+            Text(
+                "DRAG TO ZOOM · PINCH THE VIEWFINDER",
+                color = Color.White.copy(alpha = 0.38f),
+                fontSize = 9.sp,
+                letterSpacing = 1.3.sp,
+                modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
     }
 }
 
-/** "0.5×", "1×", "1.7×", "12×" for the active button; ".5", "1", "2" for the others. */
-fun zoomLabel(zoom: Float, active: Boolean): String {
-    val rounded = if (zoom >= 10f) zoom.roundToInt().toFloat() else (zoom * 10).roundToInt() / 10f
-    var text = if (rounded % 1f == 0f) rounded.toInt().toString() else String.format(Locale.US, "%.1f", rounded)
-    if (!active && text.startsWith("0.")) text = text.substring(1)
-    return if (active) "$text×" else text
-}
+/** Rounded to tenths, e.g. for toasts. */
+fun zoomText(zoom: Float): String = String.format(Locale.US, "%.1f×", (zoom * 10).roundToInt() / 10f)

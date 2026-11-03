@@ -18,7 +18,9 @@ import java.io.FileOutputStream
 object MediaStoreHelper {
     private const val FOLDER = "DCIM/Zoomify"
 
-    fun imageOutputOptions(context: Context, name: String, mimeType: String): ImageCapture.OutputFileOptions {
+    fun imageOutputOptions(
+        context: Context, name: String, mimeType: String, metadata: ImageCapture.Metadata,
+    ): ImageCapture.OutputFileOptions {
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
             put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
@@ -26,7 +28,7 @@ object MediaStoreHelper {
         }
         return ImageCapture.OutputFileOptions.Builder(
             context.contentResolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values,
-        ).build()
+        ).setMetadata(metadata).build()
     }
 
     fun videoOutputOptions(context: Context, name: String): MediaStoreOutputOptions {
@@ -41,26 +43,39 @@ object MediaStoreHelper {
     }
 
     /**
-     * Digital zoom beyond the camera's own maximum: centre-crop the full-quality JPEG, scale it back up to the
-     * original size (like the stock camera's digital zoom), keep the EXIF data and save it to the gallery.
+     * Velora's "Full-res colors", done properly: starts from the camera's full-resolution JPEG (not a video frame),
+     * applies digital zoom (centre crop scaled back to full size), the colour look and the LUT, keeps EXIF, and
+     * saves at JPEG quality 98. Returns the saved Uri and a size label.
      */
-    fun saveCroppedJpeg(context: Context, source: File, zoom: Float, name: String): Uri? {
+    fun saveProcessedJpeg(
+        context: Context, source: File, zoom: Float, look: ColorLook, lut: Lut?, name: String,
+    ): Pair<Uri, String>? {
+        val options = BitmapFactory.Options().apply { inMutable = true }
         @Suppress("DEPRECATION")
         val decoder = BitmapRegionDecoder.newInstance(source.absolutePath, false) ?: return null
         val width = decoder.width
         val height = decoder.height
-        val cropWidth = (width / zoom).toInt().coerceAtLeast(1)
-        val cropHeight = (height / zoom).toInt().coerceAtLeast(1)
+        val cropWidth = (width / zoom).toInt().coerceIn(1, width)
+        val cropHeight = (height / zoom).toInt().coerceIn(1, height)
         val left = (width - cropWidth) / 2
         val top = (height - cropHeight) / 2
-        val region = decoder.decodeRegion(Rect(left, top, left + cropWidth, top + cropHeight), BitmapFactory.Options())
+        val region = decoder.decodeRegion(Rect(left, top, left + cropWidth, top + cropHeight), options)
         decoder.recycle()
-        val scaled = Bitmap.createScaledBitmap(region, width, height, true)
-        if (scaled !== region) region.recycle()
+        var bitmap = region
+        if (cropWidth != width || cropHeight != height) {
+            bitmap = Bitmap.createScaledBitmap(region, width, height, true)
+            if (bitmap !== region) region.recycle()
+        }
+        if (!bitmap.isMutable) {
+            val copy = bitmap.copy(Bitmap.Config.ARGB_8888, true)
+            bitmap.recycle()
+            bitmap = copy
+        }
+        ColorLookProcessor.apply(bitmap, look, lut)
 
-        val temp = File(context.cacheDir, "$name-zoomed.jpg")
-        FileOutputStream(temp).use { scaled.compress(Bitmap.CompressFormat.JPEG, 100, it) }
-        scaled.recycle()
+        val temp = File(context.cacheDir, "$name-processed.jpg")
+        FileOutputStream(temp).use { bitmap.compress(Bitmap.CompressFormat.JPEG, 98, it) }
+        bitmap.recycle()
         copyExif(source, temp)
 
         val resolver = context.contentResolver
@@ -76,7 +91,7 @@ object MediaStoreHelper {
         values.put(MediaStore.MediaColumns.IS_PENDING, 0)
         resolver.update(uri, values, null, null)
         temp.delete()
-        return uri
+        return uri to "full res $width×$height"
     }
 
     private fun copyExif(from: File, to: File) {
@@ -97,8 +112,8 @@ object MediaStoreHelper {
         }
     }
 
-    fun loadThumbnail(context: Context, uri: Uri): Bitmap? = try {
-        context.contentResolver.loadThumbnail(uri, Size(240, 240), null)
+    fun loadThumbnail(context: Context, uri: Uri, size: Int = 240): Bitmap? = try {
+        context.contentResolver.loadThumbnail(uri, Size(size, size), null)
     } catch (e: Exception) {
         null
     }
