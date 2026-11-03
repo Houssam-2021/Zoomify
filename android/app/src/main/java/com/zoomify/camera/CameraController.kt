@@ -88,7 +88,9 @@ enum class LutTarget(val label: String) { PREVIEW("Preview only"), ALL("Preview 
 class CameraController(private val activity: ComponentActivity) {
 
     val previewView = PreviewView(activity).apply {
-        implementationMode = PreviewView.ImplementationMode.PERFORMANCE
+        // Android 13+: TextureView, so the Liquid Glass RenderEffect can refract the camera image.
+        implementationMode = if (android.os.Build.VERSION.SDK_INT >= 33) PreviewView.ImplementationMode.COMPATIBLE
+        else PreviewView.ImplementationMode.PERFORMANCE
         scaleType = PreviewView.ScaleType.FILL_CENTER
     }
     val zoomUi = ZoomUiState()

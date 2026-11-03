@@ -48,13 +48,15 @@ val GlassStroke = Color(0x2EFFFFFF)
 
 /** Velora's zoom block: caption, big zoom readout, preset pills and the log-scale dial. */
 @Composable
-fun ZoomBlock(state: ZoomUiState, compact: Boolean, onZoom: (Float) -> Unit, onPreset: (Float) -> Unit) {
+fun ZoomBlock(
+    state: ZoomUiState, compact: Boolean, glass: LiquidGlass?, onZoom: (Float) -> Unit, onPreset: (Float) -> Unit,
+) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         if (!compact) {
             Text("FLUID MOTION ZOOM", color = Accent, fontSize = 10.sp, letterSpacing = 2.sp, fontWeight = FontWeight.SemiBold)
         }
         ZoomReadout(state, if (compact) 40 else 52)
-        PresetRow(state, onPreset)
+        ZoomGlassBar(state, glass, onZoom = onZoom, onPreset = onPreset)
         ZoomDial(state, if (compact) 49.dp else 64.dp, showHint = !compact, onZoom = onZoom)
     }
 }
@@ -73,36 +75,6 @@ private fun ZoomReadout(state: ZoomUiState, size: Int) {
         letterSpacing = (-2).sp,
         modifier = Modifier.padding(bottom = if (size > 45) 10.dp else 4.dp),
     )
-}
-
-@Composable
-private fun PresetRow(state: ZoomUiState, onPreset: (Float) -> Unit) {
-    // Velora: a preset is selected when the target zoom is within ~4.5% of it.
-    val selected = state.presets.firstOrNull { abs(ln(state.target / it)) < 0.045f }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        for (preset in state.presets) {
-            val isSelected = preset == selected
-            val background by animateColorAsState(if (isSelected) Accent else Color(0x8C1E2025), label = "preset")
-            Box(
-                modifier = Modifier
-                    .height(38.dp)
-                    .defaultMinSize(minWidth = 44.dp)
-                    .clip(RoundedCornerShape(22.dp))
-                    .background(background)
-                    .border(1.dp, if (isSelected) Accent else Color(0x1FFFFFFF), RoundedCornerShape(22.dp))
-                    .clickable { onPreset(preset) }
-                    .padding(horizontal = 10.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    presetLabel(preset),
-                    color = if (isSelected) Color(0xFF131313) else Color.White,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-        }
-    }
 }
 
 fun presetLabel(value: Float): String {

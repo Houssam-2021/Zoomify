@@ -79,13 +79,14 @@ import kotlin.math.roundToInt
 fun CameraScreen(controller: CameraController) {
     var settingsOpen by remember { mutableStateOf(false) }
     var galleryOpen by remember { mutableStateOf(false) }
+    val glass = remember { LiquidGlass() }
     BoxWithConstraints(
         Modifier
             .fillMaxSize()
             .background(Color(0xFF050506))
     ) {
         val compact = maxHeight < 700.dp
-        Stage(controller)
+        Stage(controller, glass)
         Column(
             Modifier
                 .fillMaxSize()
@@ -94,7 +95,7 @@ fun CameraScreen(controller: CameraController) {
             TopBar(controller, onSettings = { settingsOpen = true })
             StatusArea(controller, compact)
             Spacer(Modifier.weight(1f))
-            BottomUi(controller, compact, onGallery = {
+            BottomUi(controller, compact, glass, onGallery = {
                 if (controller.lastCapture == null) controller.toast = "Take a photo or record a video first"
                 else galleryOpen = true
             })
@@ -108,11 +109,17 @@ fun CameraScreen(controller: CameraController) {
 // region Viewfinder
 
 @Composable
-private fun Stage(controller: CameraController) {
+private fun Stage(controller: CameraController, glass: LiquidGlass) {
     val density = LocalDensity.current
     val tapSlop = with(density) { 14.dp.toPx() }
     var lastTapAt by remember { mutableLongStateOf(0L) }
     Box(Modifier.fillMaxSize()) {
+      // The viewfinder layer (camera + veil + grid) is what the Liquid Glass zoom bar refracts.
+      Box(
+          Modifier
+              .fillMaxSize()
+              .graphicsLayer { renderEffect = glass.effect }
+      ) {
         AndroidView(
             factory = {
                 (controller.previewView.parent as? ViewGroup)?.removeView(controller.previewView)
@@ -150,8 +157,8 @@ private fun Stage(controller: CameraController) {
                         0f to Color.Black.copy(alpha = 0.52f),
                         0.22f to Color.Transparent,
                         0.53f to Color.Transparent,
-                        0.73f to Color.Black.copy(alpha = 0.32f),
-                        1f to Color.Black.copy(alpha = 0.94f),
+                        0.70f to Color.Black.copy(alpha = 0.22f),
+                        1f to Color.Black.copy(alpha = 0.85f),
                     )
                 )
         )
@@ -164,6 +171,7 @@ private fun Stage(controller: CameraController) {
                 }
             }
         }
+      }
 
         // Gestures: Velora's pinch (ratio^1.4), tap = focus, double tap = 1x <-> 2x.
         Box(
@@ -426,14 +434,14 @@ private fun ToastHost(controller: CameraController) {
 // region Bottom
 
 @Composable
-private fun BottomUi(controller: CameraController, compact: Boolean, onGallery: () -> Unit) {
+private fun BottomUi(controller: CameraController, compact: Boolean, glass: LiquidGlass, onGallery: () -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
             .padding(start = 23.dp, end = 23.dp, bottom = if (compact) 8.dp else 17.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        ZoomBlock(controller.zoomUi, compact, onZoom = controller::setZoom, onPreset = controller::selectPreset)
+        ZoomBlock(controller.zoomUi, compact, glass, onZoom = controller::setZoom, onPreset = controller::selectPreset)
         Row(
             Modifier.padding(top = if (compact) 4.dp else 8.dp, bottom = if (compact) 12.dp else 22.dp),
             horizontalArrangement = Arrangement.spacedBy(35.dp),
