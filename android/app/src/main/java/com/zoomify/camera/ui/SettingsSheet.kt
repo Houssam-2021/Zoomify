@@ -145,8 +145,9 @@ fun SettingsSheet(c: CameraController, onDismiss: () -> Unit) {
                 note = "Full-res colors applies the look to the camera's full-resolution JPEG. Native JPEG keeps " +
                     "the camera's colours (digital zoom is still cropped to match the viewfinder).")
             Choices("Photo format", c.photoFormat.label, c.availablePhotoFormats, c.photoFormat, { it.label },
+                enabled = { it !in c.unsupportedPhotoFormats },
                 onSelect = c::choosePhotoFormat,
-                note = "RAW saves 16-bit DNG straight from the sensor. Max res, Ultra HDR and RAW are saved natively.")
+                note = "RAW saves 16-bit DNG files to DCIM/Zoomify. ${c.rawStatus}")
 
             Section("CAMERA")
             Choices("Preview performance", c.previewPerformance.label, PreviewPerformance.entries, c.previewPerformance,

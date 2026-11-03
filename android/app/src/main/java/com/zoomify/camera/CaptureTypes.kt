@@ -38,7 +38,9 @@ enum class PhotoFormat(val label: String) {
     ULTRA_HDR("Ultra HDR"),
     RAW("RAW + JPEG"),
     /** 16-bit DNG only. */
-    RAW_ONLY("RAW DNG"),
+    RAW_ONLY("RAW DNG");
+
+    val isRaw: Boolean get() = this == RAW || this == RAW_ONLY
 }
 
 enum class VideoResolution(val label: String, val quality: Quality) {

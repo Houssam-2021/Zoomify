@@ -70,6 +70,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.abs
+import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -132,7 +133,11 @@ class CameraController(private val activity: ComponentActivity) {
     var logViewAssist by mutableStateOf(true); private set
     var photoPipeline by mutableStateOf(PhotoPipeline.PROCESSED); private set
     var photoFormat by mutableStateOf(PhotoFormat.JPEG); private set
-    var availablePhotoFormats by mutableStateOf(listOf(PhotoFormat.JPEG)); private set
+    var availablePhotoFormats by mutableStateOf(PhotoFormat.entries.toList()); private set
+    /** Formats the phone can't produce on any back camera (shown greyed out, with [rawStatus] as the reason). */
+    var unsupportedPhotoFormats by mutableStateOf(emptySet<PhotoFormat>()); private set
+    /** Plain-language RAW diagnosis for the settings sheet. */
+    var rawStatus by mutableStateOf(""); private set
     var previewPerformance by mutableStateOf(PreviewPerformance.AUTO); private set
     var sharpening by mutableStateOf(Sharpening.NATURAL); private set
     var hardwareAssist by mutableStateOf(true); private set
@@ -296,11 +301,34 @@ class CameraController(private val activity: ComponentActivity) {
         if (!front) findSeparateUltraWide(provider, provider.getCameraInfo(mainSelector)) else ultraWideId = null
         val uwId = ultraWideId
         if (uwId == null || front) usingUltraWide = false
-        val selector = if (usingUltraWide && uwId != null) {
-            CameraSelector.Builder().addCameraFilter { infos ->
+
+        // RAW: the default (logical) back camera often doesn't offer RAW to apps even when one of the phone's
+        // individual cameras does, so look across all of them and use the best one for RAW modes.
+        val wantsRaw = mode == CaptureMode.PHOTO && photoFormat.isRaw
+        val mainInfo = provider.getCameraInfo(mainSelector)
+        val mainHasRaw = hasRaw(mainInfo)
+        val rawCameraId = if (front) null else if (mainHasRaw) Camera2CameraInfo.from(mainInfo).cameraId
+        else findRawCamera(provider, mainInfo)
+        rawStatus = when {
+            front -> if (mainHasRaw) "RAW is available on the front camera." else "The front camera doesn't offer RAW."
+            mainHasRaw -> "RAW is available on the main camera."
+            rawCameraId != null -> "RAW is available on camera $rawCameraId; RAW modes switch to it automatically " +
+                "(zoom is limited to that lens)."
+            else -> "This phone doesn't give RAW to other apps on any camera, so only JPEG, Max res and Ultra HDR " +
+                "can be saved. Many mid-range Galaxy phones work this way."
+        }
+        val useRawCamera = wantsRaw && !front && !mainHasRaw && rawCameraId != null
+        if (useRawCamera) usingUltraWide = false
+
+        val selector = when {
+            useRawCamera -> CameraSelector.Builder().addCameraFilter { infos ->
+                infos.filter { Camera2CameraInfo.from(it).cameraId == rawCameraId }
+            }.build()
+            usingUltraWide && uwId != null -> CameraSelector.Builder().addCameraFilter { infos ->
                 infos.filter { Camera2CameraInfo.from(it).cameraId == uwId }
             }.build()
-        } else mainSelector
+            else -> mainSelector
+        }
         val cameraInfo = provider.getCameraInfo(selector)
         val c2 = Camera2CameraInfo.from(cameraInfo)
 
@@ -348,14 +376,21 @@ class CameraController(private val activity: ComponentActivity) {
 
         if (!isVideo) {
             val formats = ImageCapture.getImageCaptureCapabilities(cameraInfo).supportedOutputFormats
-            availablePhotoFormats = buildList {
-                add(PhotoFormat.JPEG)
-                add(PhotoFormat.HIGH_RES)
-                if (ImageCapture.OUTPUT_FORMAT_JPEG_ULTRA_HDR in formats) add(PhotoFormat.ULTRA_HDR)
-                if (ImageCapture.OUTPUT_FORMAT_RAW_JPEG in formats) add(PhotoFormat.RAW)
-                if (ImageCapture.OUTPUT_FORMAT_RAW in formats) add(PhotoFormat.RAW_ONLY)
+            val anyRawJpeg = rawCameraId != null || ImageCapture.OUTPUT_FORMAT_RAW_JPEG in formats
+            val anyRaw = rawCameraId != null || ImageCapture.OUTPUT_FORMAT_RAW in formats
+            unsupportedPhotoFormats = buildSet {
+                if (ImageCapture.OUTPUT_FORMAT_JPEG_ULTRA_HDR !in formats) add(PhotoFormat.ULTRA_HDR)
+                if (!anyRawJpeg) add(PhotoFormat.RAW)
+                if (!anyRaw) add(PhotoFormat.RAW_ONLY)
             }
-            if (photoFormat !in availablePhotoFormats) photoFormat = PhotoFormat.JPEG
+            if (photoFormat in unsupportedPhotoFormats ||
+                (photoFormat == PhotoFormat.RAW && ImageCapture.OUTPUT_FORMAT_RAW_JPEG !in formats) ||
+                (photoFormat == PhotoFormat.RAW_ONLY && ImageCapture.OUTPUT_FORMAT_RAW !in formats) ||
+                (photoFormat == PhotoFormat.ULTRA_HDR && ImageCapture.OUTPUT_FORMAT_JPEG_ULTRA_HDR !in formats)
+            ) {
+                toast = "${photoFormat.label} isn't available on this camera · saving JPEG"
+                photoFormat = PhotoFormat.JPEG
+            }
             val fullSensor = photoFormat == PhotoFormat.HIGH_RES || photoFormat == PhotoFormat.RAW ||
                 photoFormat == PhotoFormat.RAW_ONLY
             val resolution = ResolutionSelector.Builder()
@@ -530,6 +565,20 @@ class CameraController(private val activity: ComponentActivity) {
         }
         ultraWideId = bestId
         ultraWideRatio = if (bestId != null) bestRatio else 1f
+    }
+
+    private fun hasRaw(info: CameraInfo): Boolean {
+        val formats = ImageCapture.getImageCaptureCapabilities(info).supportedOutputFormats
+        return ImageCapture.OUTPUT_FORMAT_RAW in formats || ImageCapture.OUTPUT_FORMAT_RAW_JPEG in formats
+    }
+
+    /** The back camera with RAW whose field of view is closest to the main camera's (i.e. the main sensor). */
+    private fun findRawCamera(provider: ProcessCameraProvider, main: CameraInfo): String? {
+        val mainMetric = fovMetric(main) ?: 1f
+        return provider.availableCameraInfos
+            .filter { it.lensFacing == CameraSelector.LENS_FACING_BACK && hasRaw(it) }
+            .minByOrNull { info -> abs(ln((fovMetric(info) ?: mainMetric) / mainMetric)) }
+            ?.let { Camera2CameraInfo.from(it).cameraId }
     }
 
     private fun fovMetric(info: CameraInfo): Float? {
