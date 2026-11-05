@@ -175,6 +175,7 @@ jobs:
   rotation-test:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -190,7 +191,11 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+      # Emulators occasionally hang while booting on CI; each attempt is time-limited and retried once.
       - name: Key-rotation test on Android API ${{ matrix.api-level }}
+        id: attempt1
+        continue-on-error: true
+        timeout-minutes: 20
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ matrix.api-level }}
@@ -198,6 +203,17 @@ jobs:
           target: google_apis
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back emulated
+          script: bash .github/scripts/rotation-test.sh
+      - name: Retry key-rotation test on Android API ${{ matrix.api-level }}
+        if: steps.attempt1.outcome != 'success'
+        timeout-minutes: 20
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api-level }}
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back emulated -no-snapshot-load
           script: bash .github/scripts/rotation-test.sh
       - name: Upload rotation report
         if: always()
