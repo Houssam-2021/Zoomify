@@ -117,17 +117,23 @@ jobs:
             || { echo "::error::Not signed with the new release key"; exit 1; }
           # Lineage must be exactly: legacy (rollback revoked) -> new key.
           python3 - <<'PY'
-          import os, re, sys
-          t = open("signing-report/lineage.txt").read()
-          signers = re.split(r"(?=Signer #\d+ in lineage)", t)[1:]
-          assert len(signers) == 2, f"expected 2 signers in lineage, got {len(signers)}"
-          def digest(s): return re.search(r"SHA-256 digest: ([0-9a-f]+)", s).group(1)
-          def cap(s, name): return re.search(rf"Has {name} capability\s*: (\w+)", s).group(1)
-          assert digest(signers[0]) == os.environ["LEGACY_CERT_SHA256"], "lineage does not start at the legacy key"
-          assert digest(signers[1]) == os.environ["NEW_CERT_SHA256"], "lineage does not end at the new key"
-          assert cap(signers[0], "installed data") == "true", "legacy key must keep installed-data (in-place updates)"
-          assert cap(signers[0], "rollback") == "false", "legacy key must not have rollback"
-          print("Lineage OK: legacy -> new, legacy rollback revoked")
+          import os, re
+          signers, current = {}, None
+          for line in open("signing-report/lineage.txt"):
+              m = re.match(r"Signer #(\d+) in lineage certificate SHA-256 digest: ([0-9a-f]+)", line)
+              if m:
+                  current = int(m.group(1)); signers[current] = {"digest": m.group(2)}
+                  continue
+              m = re.match(r"Has (.+?) capability\s*: (\w+)", line)
+              if m and current is not None:
+                  signers[current][m.group(1)] = m.group(2)
+          assert sorted(signers) == [1, 2], f"expected exactly 2 signers in lineage, got {sorted(signers)}"
+          old, new = signers[1], signers[2]
+          assert old["digest"] == os.environ["LEGACY_CERT_SHA256"], "lineage does not start at the legacy key"
+          assert new["digest"] == os.environ["NEW_CERT_SHA256"], "lineage does not end at the new key"
+          assert old["installed data"] == "true", "legacy key must keep installed-data (in-place updates)"
+          assert old["rollback"] == "false", "legacy key must not have rollback"
+          print("Lineage OK: legacy -> new, legacy rollback revoked:", signers)
           PY
           "$BT/aapt2" dump badging Zoomify.apk | tee signing-report/badging.txt
           grep -q "versionCode='${{ steps.meta.outputs.version_code }}'" signing-report/badging.txt
