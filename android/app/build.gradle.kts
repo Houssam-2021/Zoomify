@@ -18,8 +18,9 @@ android {
         versionName = "1.0"
     }
 
-    // A fixed key so every APK built by CI is signed the same way and installs over the previous one.
-    // It is a throwaway sideloading key, not a Play Store key.
+    // LEGACY KEY - COMPROMISED. This key was committed publicly, so it is only used for local debug builds and as
+    // the "old signer" in CI's key rotation (.github/workflows/android.yml). Public release APKs are built unsigned
+    // here and signed in CI with the private key from the ZOOMIFY_KEYSTORE_* secrets plus a rotation proof.
     signingConfigs {
         create("sideload") {
             storeFile = file("zoomify-sideload.keystore")
@@ -32,7 +33,7 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("sideload")
+            // Unsigned on purpose: see the signing step in CI.
         }
         debug {
             signingConfig = signingConfigs.getByName("sideload")

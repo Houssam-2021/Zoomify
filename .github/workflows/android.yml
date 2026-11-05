@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - "android/**"
+      - "site/**"
       - ".github/workflows/android.yml"
   workflow_dispatch:
 
@@ -17,6 +18,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      HAS_SIGNING_KEY: ${{ secrets.ZOOMIFY_KEYSTORE_B64 != '' && secrets.ZOOMIFY_KEYSTORE_PASSWORD != '' }}
+      HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
     defaults:
       run:
         working-directory: android
@@ -30,11 +34,54 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Build APK
+      - name: Build unsigned release APK
         run: ./gradlew --no-daemon --stacktrace assembleRelease
 
-      - name: Rename APK
-        run: cp app/build/outputs/apk/release/app-release.apk Zoomify.apk
+      # Public releases are never signed with the leaked legacy key alone. Without the new key, stop here.
+      - name: Require the new signing key
+        if: env.HAS_SIGNING_KEY != 'true'
+        run: |
+          echo "::error::Add the ZOOMIFY_KEYSTORE_B64 and ZOOMIFY_KEYSTORE_PASSWORD repository secrets. Nothing was published."
+          exit 1
+
+      # Key rotation (APK Signature Scheme v3): the APK carries a proof, signed by the old (leaked) key, that the
+      # new key replaces it. Existing installs accept it as a normal update. The old key loses "rollback", so once a
+      # phone has this version, an APK signed only with the leaked key can no longer be installed over it.
+      - name: Sign with the new key and rotation proof
+        env:
+          ZOOMIFY_KEYSTORE_B64: ${{ secrets.ZOOMIFY_KEYSTORE_B64 }}
+          ZOOMIFY_KEYSTORE_PASSWORD: ${{ secrets.ZOOMIFY_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          echo "Using build-tools $BT"
+          umask 077
+          KEYDIR="$RUNNER_TEMP/keys"
+          mkdir -p "$KEYDIR"
+          echo "$ZOOMIFY_KEYSTORE_B64" | base64 -d > "$KEYDIR/new.p12"
+          LEGACY=app/zoomify-sideload.keystore
+
+          "$BT/apksigner" rotate --out "$KEYDIR/lineage.bin" \
+            --old-signer --ks "$LEGACY" --ks-pass pass:REDACTED --ks-key-alias zoomify --key-pass pass:REDACTED \
+              --set-rollback false --set-permission false --set-shared-uid false --set-auth false \
+            --new-signer --ks "$KEYDIR/new.p12" --ks-type PKCS12 --ks-pass env:ZOOMIFY_KEYSTORE_PASSWORD \
+              --ks-key-alias zoomify
+
+          "$BT/zipalign" -p -f 4 app/build/outputs/apk/release/app-release-unsigned.apk "$KEYDIR/aligned.apk"
+
+          "$BT/apksigner" sign \
+            --ks "$LEGACY" --ks-pass pass:REDACTED --ks-key-alias zoomify --key-pass pass:REDACTED \
+            --next-signer --ks "$KEYDIR/new.p12" --ks-type PKCS12 --ks-pass env:ZOOMIFY_KEYSTORE_PASSWORD \
+              --ks-key-alias zoomify \
+            --lineage "$KEYDIR/lineage.bin" --rotation-min-sdk-version 28 \
+            --out Zoomify.apk "$KEYDIR/aligned.apk"
+
+          echo "--- Signature check ---"
+          "$BT/apksigner" verify -v --print-certs Zoomify.apk | tee "$RUNNER_TEMP/verify.txt"
+          echo "--- Rotation lineage ---"
+          "$BT/apksigner" lineage --in Zoomify.apk --print-certs | tee "$RUNNER_TEMP/lineage.txt"
+          grep -q "Verified using v3 scheme (APK Signature Scheme v3): true" "$RUNNER_TEMP/verify.txt"
+          rm -rf "$KEYDIR"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -52,4 +99,29 @@ jobs:
             --prerelease \
             --target "$GITHUB_SHA" \
             --title "Zoomify for Android (latest build)" \
-            --notes "Built from ${GITHUB_SHA::7} on branch ${GITHUB_REF_NAME}. Download Zoomify.apk on your phone and open it to install."
+            --notes "Built from ${GITHUB_SHA::7}. Signed with Zoomify's new release key (SHA-256 72:96:CD:BF:...:A7:CC:CF) and a key-rotation proof: install it over your current Zoomify to keep your settings and stay protected."
+
+      # Cloudflare Pages (free plan: commercial use allowed, no usage-based billing). Skipped until you add the
+      # CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID secrets (see README).
+      - name: Prepare website
+        if: env.HAS_CLOUDFLARE == 'true'
+        run: |
+          set -euo pipefail
+          SIZE_BYTES=$(stat -c %s Zoomify.apk)
+          if [ "$SIZE_BYTES" -ge 26000000 ]; then
+            echo "::error::Zoomify.apk is over Cloudflare Pages' 25 MiB per-file limit."
+            exit 1
+          fi
+          rm -rf ../site-dist && cp -r ../site ../site-dist && cp Zoomify.apk ../site-dist/Zoomify.apk
+          VERSION=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          SIZE_MB=$(awk "BEGIN { printf \"%.1f\", $SIZE_BYTES / 1048576 }")
+          sed -i "s/__VERSION__/$VERSION/; s/__BUILD__/${GITHUB_SHA::7}/; s/__SIZE__/$SIZE_MB/; s/__DATE__/$(date -u +%Y-%m-%d)/" ../site-dist/index.html
+
+      - name: Deploy to Cloudflare Pages
+        if: env.HAS_CLOUDFLARE == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx --yes wrangler@4 pages project create zoomify --production-branch=main || true
+          npx --yes wrangler@4 pages deploy ../site-dist --project-name=zoomify --branch=main --commit-dirty=true

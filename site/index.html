@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#08090b">
+<meta name="description" content="Zoomify: a cinematic camera for Android with fluid 50x zoom, motion blur, Log video, LUTs and 4K recording.">
+<title>Zoomify: Cinematic Camera for Android</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23111'/%3E%3Ccircle cx='32' cy='32' r='17' fill='none' stroke='white' stroke-width='3'/%3E%3Ccircle cx='32' cy='32' r='10' fill='%23f5cb69'/%3E%3C/svg%3E">
+<!-- AdSense: once your site is approved, paste the AdSense <script> tag Google gives you here,
+     and put your publisher line in ads.txt (see README). -->
+<style>
+:root { color-scheme: dark; --accent:#f5cb69; --dim:rgba(255,255,255,.6); --line:rgba(255,255,255,.12); }
+* { box-sizing:border-box }
+body { margin:0; background:radial-gradient(ellipse at 50% -10%,#252532 0%,#0b0c10 55%,#050506 100%) fixed;
+  color:#f7f9fc; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; line-height:1.6 }
+main { max-width:960px; margin:0 auto; padding:24px 20px 64px }
+header { display:flex; align-items:center; gap:12px; padding:8px 0 40px }
+.mark { width:38px; height:38px; border-radius:12px; display:grid; place-items:center; border:1px solid rgba(255,255,255,.25);
+  background:rgba(255,255,255,.08); font-size:20px }
+.brand b { display:block; letter-spacing:.2em; font-size:14px } .brand small { color:var(--dim); font-size:9px; letter-spacing:.14em }
+.hero { text-align:center; padding:24px 0 40px }
+.eyebrow { color:var(--accent); font-size:12px; letter-spacing:.3em; font-weight:700 }
+h1 { font-size:clamp(38px,7vw,64px); line-height:1.05; letter-spacing:-.045em; margin:14px 0 16px; font-weight:600 }
+.lead { color:var(--dim); font-size:17px; max-width:560px; margin:0 auto 30px }
+.download { display:inline-flex; align-items:center; gap:10px; background:#f3f3f5; color:#141416; text-decoration:none;
+  font-weight:700; font-size:16px; padding:17px 28px; border-radius:18px; box-shadow:0 14px 40px rgba(255,255,255,.08) }
+.download:active { transform:scale(.97) }
+.meta { color:rgba(255,255,255,.4); font-size:12px; margin-top:14px }
+.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; margin:30px 0 }
+.card { background:rgba(255,255,255,.04); border:1px solid var(--line); border-radius:20px; padding:20px }
+.card h3 { margin:0 0 6px; font-size:16px } .card p { margin:0; color:var(--dim); font-size:14px }
+.card .k { color:var(--accent); font-size:11px; letter-spacing:.2em; font-weight:700 }
+section h2 { font-size:22px; letter-spacing:-.02em; margin:44px 0 12px }
+ol { color:var(--dim); padding-left:20px } ol li { margin:6px 0 }
+.notice { border:1px solid rgba(245,203,105,.35); background:rgba(245,203,105,.07); border-radius:16px; padding:16px 18px;
+  color:rgba(255,255,255,.8); font-size:14px }
+code { background:rgba(255,255,255,.08); padding:2px 6px; border-radius:6px; font-size:12.5px; word-break:break-all }
+.ad-slot { margin:36px 0; min-height:0 }
+footer { border-top:1px solid var(--line); margin-top:48px; padding-top:20px; color:rgba(255,255,255,.4); font-size:13px;
+  display:flex; gap:16px; flex-wrap:wrap }
+footer a { color:rgba(255,255,255,.6) }
+@media (max-width:480px) { main { padding:16px 16px 48px } .lead { font-size:16px } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <span class="mark" aria-hidden="true">◉</span>
+    <div class="brand"><b>ZOOMIFY</b><small>CINEMATIC CAMERA</small></div>
+  </header>
+
+  <div class="hero">
+    <div class="eyebrow">MOTION, REIMAGINED</div>
+    <h1>Zoom into<br>the moment.</h1>
+    <p class="lead">A camera for Android with fluid zoom up to 50×, real motion blur, Liquid Glass controls,
+      Log video with LUTs, and high-bitrate 4K.</p>
+    <a class="download" href="/Zoomify.apk" download>Download for Android ↓</a>
+    <div class="meta">Version __VERSION__ · build __BUILD__ · __SIZE__ MB · Android 11 or newer · updated __DATE__</div>
+  </div>
+
+  <div class="grid">
+    <div class="card"><div class="k">ZOOM</div><h3>Fluid 0.5× – 50×</h3><p>Spring-smooth zoom with lens switching, a Liquid Glass zoom bar and motion blur.</p></div>
+    <div class="card"><div class="k">VIDEO</div><h3>4K · 30 / 60 fps</h3><p>Up to 150 Mb/s, 10-bit HDR, Zoomify Log and Horizon Lock, where your phone supports them.</p></div>
+    <div class="card"><div class="k">COLOR</div><h3>Looks &amp; LUTs</h3><p>Natural colour science and built-in 3D LUTs, applied live on the GPU.</p></div>
+    <div class="card"><div class="k">PHOTO</div><h3>Full-res &amp; RAW</h3><p>Full-resolution JPEG, Ultra HDR and 16-bit DNG on phones that offer RAW.</p></div>
+  </div>
+
+  <div class="ad-slot" aria-hidden="true"><!-- AdSense ad unit goes here --></div>
+
+  <section>
+    <h2>Install</h2>
+    <ol>
+      <li>Tap <b>Download for Android</b> above.</li>
+      <li>Open the downloaded <code>Zoomify.apk</code>. If Android asks, allow your browser to install unknown apps.</li>
+      <li>Allow camera and microphone access when Zoomify opens.</li>
+    </ol>
+    <div class="notice"><b>Security update (November 2026):</b> Zoomify now uses a new signing key. Please install
+      this version over your current one: your settings stay, and from then on your phone will only accept
+      genuine Zoomify updates. Only download Zoomify from this site.<br><br>
+      Genuine signing certificate (SHA-256):<br><code>72:96:CD:BF:1D:D6:13:C7:53:17:E4:5A:28:8F:AB:9B:C0:43:D8:2D:E5:33:9D:44:FB:EC:70:BF:91:A7:CC:CF</code></div>
+  </section>
+
+  <footer>
+    <span>© 2026 Zoomify</span>
+    <a href="/privacy.html">Privacy policy</a>
+    <a href="https://github.com/Houssam-2021/Zoomify">Source code</a>
+  </footer>
+</main>
+</body>
+</html>

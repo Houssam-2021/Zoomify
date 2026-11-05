@@ -36,7 +36,7 @@ import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.MirrorMode
 import androidx.camera.core.Preview
 import androidx.camera.core.UseCase
-import androidx.camera.core.UseCaseGroup
+import androidx.camera.core.SessionConfig
 import androidx.camera.core.ZoomState
 import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
@@ -56,6 +56,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
+import com.zoomify.camera.ui.presetLabel
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Observer
 import androidx.lifecycle.lifecycleScope
@@ -150,6 +151,9 @@ class CameraController(private val activity: ComponentActivity) {
     var stabilizationSupported by mutableStateOf(false); private set
     var hardwareZoomRange by mutableStateOf("1.0–1.0×"); private set
     var effectivePath by mutableStateOf(VideoPath.CINEMATIC); private set
+    var frameRate by mutableIntStateOf(30); private set
+    var fps60Supported by mutableStateOf(false); private set
+    var activeFps by mutableIntStateOf(30); private set
 
     // endregion
 
@@ -183,9 +187,14 @@ class CameraController(private val activity: ComponentActivity) {
     @Volatile private var lastPhysicalCameraId: String? = null
 
     // Separate ultra-wide camera (phones that don't put the ultra-wide inside the main logical camera).
-    private var ultraWideId: String? = null
-    private var ultraWideRatio = 1f
-    private var usingUltraWide = false
+    /** Back cameras that aren't fused into the main logical camera: an ultra-wide (< 1x) and/or telephotos (> 1x). */
+    private data class SeparateLens(val id: String, val ratio: Float)
+    private var separateLenses: List<SeparateLens> = emptyList()
+    /** Native zoom of every telephoto, fused or separate (shown as presets). */
+    private var teleRatios: List<Float> = emptyList()
+    /** The separate lens currently bound, or null for the main camera. */
+    private var activeLens: SeparateLens? = null
+    private var mainMinZoom = 1f
     private var lensHopInProgress = false
 
     private var focusJob: Job? = null
@@ -278,8 +287,9 @@ class CameraController(private val activity: ComponentActivity) {
                 else -> "SD"
             }
             val lens = if (lensFacing == CameraSelector.LENS_FACING_FRONT) "FRONT" else "REAR"
-            cameraStatus = "$lens · $label 30 FPS"
-            sourceInfo = if (size != null) "LIVE ${size.width} × ${size.height} · 30 FPS" else "LIVE SOURCE"
+            val fpsLabel = if (mode == CaptureMode.VIDEO) activeFps else 30
+            cameraStatus = "$lens · $label $fpsLabel FPS"
+            sourceInfo = if (size != null) "LIVE ${size.width} × ${size.height} · $fpsLabel FPS" else "LIVE SOURCE"
             engineStatus = if (effectActive) "PREVIEW $fps FPS" else "DIRECT SENSOR"
         }
     }
@@ -298,9 +308,11 @@ class CameraController(private val activity: ComponentActivity) {
             toast = "This camera isn't available."
             return
         }
-        if (!front) findSeparateUltraWide(provider, provider.getCameraInfo(mainSelector)) else ultraWideId = null
-        val uwId = ultraWideId
-        if (uwId == null || front) usingUltraWide = false
+        if (!front) findSeparateLenses(provider, provider.getCameraInfo(mainSelector)) else {
+            separateLenses = emptyList()
+            teleRatios = emptyList()
+        }
+        if (front || activeLens !in separateLenses) activeLens = null
 
         // RAW: the default (logical) back camera often doesn't offer RAW to apps even when one of the phone's
         // individual cameras does, so look across all of them and use the best one for RAW modes.
@@ -318,14 +330,15 @@ class CameraController(private val activity: ComponentActivity) {
                 "can be saved. Many mid-range Galaxy phones work this way."
         }
         val useRawCamera = wantsRaw && !front && !mainHasRaw && rawCameraId != null
-        if (useRawCamera) usingUltraWide = false
+        if (useRawCamera) activeLens = null
+        val lens = activeLens
 
         val selector = when {
             useRawCamera -> CameraSelector.Builder().addCameraFilter { infos ->
                 infos.filter { Camera2CameraInfo.from(it).cameraId == rawCameraId }
             }.build()
-            usingUltraWide && uwId != null -> CameraSelector.Builder().addCameraFilter { infos ->
-                infos.filter { Camera2CameraInfo.from(it).cameraId == uwId }
+            lens != null -> CameraSelector.Builder().addCameraFilter { infos ->
+                infos.filter { Camera2CameraInfo.from(it).cameraId == lens.id }
             }.build()
             else -> mainSelector
         }
@@ -438,7 +451,6 @@ class CameraController(private val activity: ComponentActivity) {
             if (wanted !in qualities) toast = "${videoResolution.label} isn't available here · using the closest size"
             val videoBuilder = VideoCapture.Builder(recorder)
                 .setDynamicRange(range)
-                .setTargetFrameRate(Range(30, 30))
                 .setTargetRotation(targetRotation)
                 .setMirrorMode(if (mirrorFront) MirrorMode.MIRROR_MODE_ON_FRONT_ONLY else MirrorMode.MIRROR_MODE_OFF)
             if (stabilization != Stabilization.OFF && stabilizationSupported) {
@@ -456,8 +468,12 @@ class CameraController(private val activity: ComponentActivity) {
             digitalZoomAllowed = effectivePath == VideoPath.CINEMATIC
         }
 
-        val bound = bindGroup(provider, selector, useCases, effectTargets)
-            ?: if (effectTargets != null) bindGroup(provider, selector, useCases, null) else null
+        val wantFps = if (isVideo) frameRate else null
+        val bound = bindSession(provider, selector, cameraInfo, useCases, effectTargets, wantFps)
+            ?: if (effectTargets != null) bindSession(provider, selector, cameraInfo, useCases, null, wantFps) else null
+        if (isVideo && frameRate == 60 && activeFps != 60) {
+            toast = "60 fps isn't supported at ${videoResolution.label} in this mode · recording at $activeFps fps"
+        }
         if (bound == null) {
             toast = "Couldn't start the camera."
             return
@@ -482,15 +498,34 @@ class CameraController(private val activity: ComponentActivity) {
         }
     }
 
-    private fun bindGroup(
-        provider: ProcessCameraProvider, selector: CameraSelector, useCases: List<UseCase>, effectTargets: Int?,
+    /**
+     * Binds with CameraX 1.5's SessionConfig. For video, the frame rate is only set to a range the camera reports
+     * as supported for this exact combination (resolution, effects, stabilisation), so 60 fps is offered only
+     * where it really works, and the rate is then guaranteed rather than a hint.
+     */
+    private fun bindSession(
+        provider: ProcessCameraProvider, selector: CameraSelector, cameraInfo: CameraInfo,
+        useCases: List<UseCase>, effectTargets: Int?, wantFps: Int?,
     ): Camera? = try {
-        val group = UseCaseGroup.Builder()
-        useCases.forEach { group.addUseCase(it) }
-        if (effectTargets != null) group.addEffect(ZoomBlurEffect(effectTargets, processor))
+        val effects: List<CameraEffect> =
+            if (effectTargets != null) listOf(ZoomBlurEffect(effectTargets, processor)) else emptyList()
+        val probe = SessionConfig(useCases = useCases, effects = effects)
+        val supported = if (wantFps != null) cameraInfo.getSupportedFrameRateRanges(probe) else emptySet()
+        fun fixed(fps: Int) = supported.any { it.lower == fps && it.upper == fps }
+        val fps = when {
+            wantFps == null -> null
+            wantFps == 60 && fixed(60) -> 60
+            fixed(30) -> 30
+            else -> null
+        }
+        val config = if (fps != null) {
+            SessionConfig(useCases = useCases, effects = effects, frameRateRange = Range(fps, fps))
+        } else probe
         provider.unbindAll()
-        val camera = provider.bindToLifecycle(activity, selector, group.build())
-        effectActive = effectTargets != null
+        val camera = provider.bindToLifecycle(activity, selector, config)
+        effectActive = effects.isNotEmpty()
+        if (wantFps != null) fps60Supported = fixed(60)
+        activeFps = fps ?: 30
         camera
     } catch (e: Exception) {
         Log.w("Zoomify", "Binding failed (effect=${effectTargets != null})", e)
@@ -520,51 +555,84 @@ class CameraController(private val activity: ComponentActivity) {
     private fun updateZoomRange(lo: Float, hi: Float) {
         hardwareMinZoom = lo
         hardwareMaxZoom = hi
-        if (!usingUltraWide) mainMaxZoom = hi
-        val base = if (usingUltraWide) ultraWideRatio else 1f
-        hardwareZoomRange = String.format(Locale.US, "%.1f–%.1f×", lo * base, hi * base)
-
+        val lens = activeLens
+        if (lens == null) {
+            mainMinZoom = lo
+            mainMaxZoom = hi
+        }
+        val base = lens?.ratio ?: 1f
+        val ultraWide = separateLenses.firstOrNull { it.ratio < 1f }
+        val longestTele = separateLenses.filter { it.ratio > 1f }.maxOfOrNull { it.ratio }
         val widest = when {
             !hardwareAssist -> 1f
-            ultraWideId != null -> ultraWideRatio
-            usingUltraWide -> ultraWideRatio
-            else -> min(1f, lo)
+            ultraWide != null -> ultraWide.ratio
+            else -> min(1f, mainMinZoom)
         }
+        // With a separate telephoto, the optical reach is its native zoom times its own (digital) zoom range.
+        val opticalMax = max(mainMaxZoom, if (longestTele != null) longestTele * max(hi, 4f) else 0f)
         val longest = when {
             digitalZoomAllowed -> 50f
-            hardwareAssist -> min(50f, mainMaxZoom)
+            hardwareAssist -> min(50f, opticalMax)
             else -> 1f
         }
+        hardwareZoomRange = String.format(Locale.US, "%.1f–%.1f×", widest, min(50f, opticalMax)) +
+            if (teleRatios.isNotEmpty()) " (telephoto ${teleRatios.joinToString(", ") { presetLabel(it) }})" else ""
         zoomUi.minZoom = widest
         zoomUi.maxZoom = longest
         zoomUi.presets = buildList {
             if (widest < 0.95f) add((widest * 10).roundToInt() / 10f)
-            addAll(listOf(1f, 2f, 5f, 10f, 20f, 50f).filter { it <= longest + 0.01f })
+            val values = (listOf(1f, 2f, 5f, 10f, 20f, 50f) + if (hardwareAssist) teleRatios else emptyList())
+                .filter { it <= longest + 0.01f }
+                .sorted()
+            for (v in values) if (none { abs(ln(it / v)) < 0.08f }) add(v)
         }
         zoomAnimator.setRange(widest, longest)
     }
 
-    /** Finds a back camera clearly wider than the main one, for phones that don't fuse it into the main camera. */
-    private fun findSeparateUltraWide(provider: ProcessCameraProvider, main: CameraInfo) {
-        val mainMin = Camera2CameraInfo.from(main)
-            .getCameraCharacteristic(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)?.lower ?: 1f
-        if (mainMin < 0.95f) {   // The main logical camera already reaches the ultra-wide: the smoothest path.
-            ultraWideId = null
+    /**
+     * Works out the phone's lenses. Lenses fused into the main logical camera are reached by plain zoom (the
+     * smoothest path: the camera switches lenses itself). Lenses exposed only as separate cameras (common on
+     * Samsung) get a freeze-frame lens hop. Phones without an ultra-wide or telephoto simply don't get one.
+     */
+    private fun findSeparateLenses(provider: ProcessCameraProvider, main: CameraInfo) {
+        val mainC2 = Camera2CameraInfo.from(main)
+        val mainId = mainC2.cameraId
+        val mainMin = mainC2.getCameraCharacteristic(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)?.lower ?: 1f
+        val mainMetric = fovMetric(main)
+        if (mainMetric == null) {
+            separateLenses = emptyList()
+            teleRatios = emptyList()
             return
         }
-        val mainMetric = fovMetric(main) ?: run { ultraWideId = null; return }
-        var bestId: String? = null
-        var bestRatio = 1f
+
+        // Telephotos inside the main logical camera (reached by zooming the main camera).
+        val fusedTele = mutableListOf<Float>()
+        try {
+            val manager = activity.getSystemService(android.hardware.camera2.CameraManager::class.java)
+            for (id in manager.getCameraCharacteristics(mainId).physicalCameraIds) {
+                val ratio = (fovMetric(manager.getCameraCharacteristics(id)) ?: continue) / mainMetric
+                if (ratio > 1.6f) fusedTele += ratio
+            }
+        } catch (e: Exception) {
+            // Physical cameras hidden: fall back to the separate-camera scan below.
+        }
+
+        var ultraWide: SeparateLens? = null
+        val teles = mutableListOf<SeparateLens>()
         for (info in provider.availableCameraInfos) {
             if (info.lensFacing != CameraSelector.LENS_FACING_BACK) continue
+            val id = Camera2CameraInfo.from(info).cameraId
+            if (id == mainId) continue
             val ratio = (fovMetric(info) ?: continue) / mainMetric
-            if (ratio < 0.8f && ratio < bestRatio) {
-                bestRatio = ratio
-                bestId = Camera2CameraInfo.from(info).cameraId
+            when {
+                ratio < 0.8f && mainMin >= 0.95f && (ultraWide == null || ratio < ultraWide.ratio) ->
+                    ultraWide = SeparateLens(id, ratio)
+                ratio > 1.6f && fusedTele.none { abs(ln(it / ratio)) < 0.1f } &&
+                    teles.none { abs(ln(it.ratio / ratio)) < 0.1f } -> teles += SeparateLens(id, ratio)
             }
         }
-        ultraWideId = bestId
-        ultraWideRatio = if (bestId != null) bestRatio else 1f
+        separateLenses = listOfNotNull(ultraWide) + teles.sortedBy { it.ratio }
+        teleRatios = (fusedTele + teles.map { it.ratio }).map { (it * 10).roundToInt() / 10f }.distinct().sorted()
     }
 
     private fun hasRaw(info: CameraInfo): Boolean {
@@ -586,6 +654,12 @@ class CameraController(private val activity: ComponentActivity) {
         val focal = c2.getCameraCharacteristic(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull()
             ?: return null
         val sensor = c2.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE) ?: return null
+        return if (sensor.width > 0f) focal / sensor.width else null
+    }
+
+    private fun fovMetric(chars: CameraCharacteristics): Float? {
+        val focal = chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull() ?: return null
+        val sensor = chars.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE) ?: return null
         return if (sensor.width > 0f) focal / sensor.width else null
     }
 
@@ -615,7 +689,7 @@ class CameraController(private val activity: ComponentActivity) {
         zoomUi.zoom = zoom
         zoomUi.target = zoomAnimator.targetZoom
         maybeHopLens()
-        val base = if (usingUltraWide) ultraWideRatio else 1f
+        val base = activeLens?.ratio ?: 1f
         val hardware = if (hardwareAssist) (zoom / base).coerceIn(hardwareMinZoom, max(hardwareMinZoom, hardwareMaxZoom))
         else 1f
         val digital = if (effectActive && digitalZoomAllowed) max(1f, zoom / (hardware * base)) else 1f
@@ -627,21 +701,29 @@ class CameraController(private val activity: ComponentActivity) {
         processor.updateZoom(zoom, velocity, digital)
     }
 
+    /** Which camera should serve this zoom: a separate telephoto past its native zoom, the ultra-wide below 1x. */
+    private fun lensFor(zoom: Float): SeparateLens? {
+        val current = activeLens
+        for (tele in separateLenses.filter { it.ratio > 1f }.sortedByDescending { it.ratio }) {
+            val threshold = if (current == tele) tele.ratio * 0.97f else tele.ratio   // hysteresis
+            if (zoom >= threshold) return tele
+        }
+        val ultraWide = separateLenses.firstOrNull { it.ratio < 1f } ?: return null
+        val threshold = if (current == ultraWide) 1.0f else 0.97f
+        return if (zoom < threshold) ultraWide else null
+    }
+
     /**
-     * Phones without a fused multi-camera: hop between the separate ultra-wide and the main camera. The jump is
-     * hidden behind a blurred freeze-frame that cross-fades into the new camera's first frames.
+     * Phones whose ultra-wide / telephoto are separate cameras: hop to the right one as the zoom crosses its
+     * native zoom. The jump is hidden behind a blurred freeze-frame that cross-fades into the new lens.
      */
     private fun maybeHopLens() {
-        if (ultraWideId == null || lensHopInProgress || isRecording || !hardwareAssist) return
-        val target = zoomAnimator.targetZoom
-        val toUltraWide = when {
-            !usingUltraWide && target < 0.97f -> true
-            usingUltraWide && target >= 1.0f -> false
-            else -> return
-        }
+        if (separateLenses.isEmpty() || lensHopInProgress || isRecording || !hardwareAssist) return
+        val next = lensFor(zoomAnimator.targetZoom)
+        if (next == activeLens) return
         lensHopInProgress = true
         freezeFrame = previewView.bitmap
-        usingUltraWide = toUltraWide
+        activeLens = next
         activity.lifecycleScope.launch {
             bind(keepZoom = true)
             val startFrames = processor.previewFrames
@@ -690,7 +772,7 @@ class CameraController(private val activity: ComponentActivity) {
         if (isRecording) return run { toast = "Stop recording before switching cameras" }
         lensFacing = if (lensFacing == CameraSelector.LENS_FACING_BACK) CameraSelector.LENS_FACING_FRONT
         else CameraSelector.LENS_FACING_BACK
-        usingUltraWide = false
+        activeLens = null
         torchOn = false
         bind(keepZoom = false)
     }
@@ -747,6 +829,7 @@ class CameraController(private val activity: ComponentActivity) {
 
     fun chooseResolution(value: VideoResolution) = changeAndRebind { videoResolution = value }
     fun chooseBitrate(value: VideoBitrate) = changeAndRebind { bitrate = value }
+    fun chooseFrameRate(value: Int) = changeAndRebind { frameRate = value }
     fun chooseVideoPath(value: VideoPath) = changeAndRebind { videoPath = value }
     fun choosePhotoFormat(value: PhotoFormat) = changeAndRebind { photoFormat = value }
     fun choosePreviewPerformance(value: PreviewPerformance) = changeAndRebind { previewPerformance = value }
@@ -800,8 +883,8 @@ class CameraController(private val activity: ComponentActivity) {
     fun toggleHardwareAssist() {
         hardwareAssist = !hardwareAssist
         if (!hardwareAssist) {
-            if (usingUltraWide) {
-                usingUltraWide = false
+            if (activeLens != null) {
+                activeLens = null
                 bind(keepZoom = false)
             }
             camera?.cameraControl?.setZoomRatio(1f)
@@ -951,7 +1034,7 @@ class CameraController(private val activity: ComponentActivity) {
         buzz(25)
         val size = capture.resolutionInfo?.resolution
         val sizeText = if (size != null) "${size.width}×${size.height}" else videoResolution.label
-        toast = "${effectivePath.label} recording · $sizeText · ${bitrate.mbps} Mb/s target"
+        toast = "${effectivePath.label} recording · $sizeText · $activeFps fps · ${bitrate.mbps} Mb/s target"
         recording = withAudio.start(mainExecutor) { event ->
             when (event) {
                 is VideoRecordEvent.Start -> recordingStartedAt = SystemClock.elapsedRealtime()

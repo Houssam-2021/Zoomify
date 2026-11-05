@@ -104,6 +104,11 @@ fun SettingsSheet(c: CameraController, onDismiss: () -> Unit) {
             Choices("Video bitrate target", c.bitrate.label, VideoBitrate.entries, c.bitrate, { it.label },
                 onSelect = c::chooseBitrate,
                 note = "50 Mb/s ≈ 375 MB/minute. The phone's encoder may cap very high targets.")
+            Choices("Frame rate", "${c.activeFps} fps", listOf(30, 60), c.frameRate, { "$it fps" },
+                enabled = { it == 30 || c.fps60Supported }, onSelect = c::chooseFrameRate,
+                note = if (c.fps60Supported) "60 fps is supported by this camera at ${c.videoResolution.label} in this mode."
+                else "60 fps isn't supported by this camera at ${c.videoResolution.label} in this mode. " +
+                    "Try 1080p, Sensor HQ or turning Horizon lock off.")
             Choices("Video recording path", c.effectivePath.label, VideoPath.entries, c.videoPath, { it.label },
                 onSelect = c::chooseVideoPath,
                 note = "Cinematic records zoom past the lens, colour, LUT and motion blur at full resolution (including 4K). " +
