@@ -1,1 +1,7 @@
-/Zoomify.apk https://github.com/Houssam-2021/Zoomify/releases/download/android-latest/Zoomify.apk 302
+# __RELEASE_TAG__ is replaced by CI with the GitHub Release that just passed signing checks.
+/download        https://github.com/Houssam-2021/Zoomify/releases/download/__RELEASE_TAG__/Zoomify.apk 302
+/Zoomify.apk     https://github.com/Houssam-2021/Zoomify/releases/download/__RELEASE_TAG__/Zoomify.apk 302
+/release-notes   https://github.com/Houssam-2021/Zoomify/releases/tag/__RELEASE_TAG__ 302
+/privacy         /privacy.html 301
+/help            /help.html 301
+/contact         /contact.html 301
