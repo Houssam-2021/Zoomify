@@ -503,6 +503,7 @@ class CameraController(private val activity: ComponentActivity) {
      * as supported for this exact combination (resolution, effects, stabilisation), so 60 fps is offered only
      * where it really works, and the rate is then guaranteed rather than a hint.
      */
+    @kotlin.OptIn(androidx.camera.core.ExperimentalSessionConfig::class)
     private fun bindSession(
         provider: ProcessCameraProvider, selector: CameraSelector, cameraInfo: CameraInfo,
         useCases: List<UseCase>, effectTargets: Int?, wantFps: Int?,
