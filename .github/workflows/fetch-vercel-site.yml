@@ -1,0 +1,18 @@
+# Temporary: copies the live Vercel site into the log so it can be ported to Cloudflare. Delete after use.
+name: Fetch current website (temporary)
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          set -euo pipefail
+          curl -sS -L -D headers.txt -o index.html https://zoomify.houseli.site/
+          echo "=== HEADERS ==="; cat headers.txt
+          echo "=== SHA256 $(sha256sum index.html | cut -d' ' -f1) SIZE $(stat -c %s index.html) ==="
+          echo "=== BEGIN BASE64 ==="
+          gzip -9 -c index.html | base64 -w 0 | fold -w 3000
+          echo
+          echo "=== END BASE64 ==="
