@@ -140,7 +140,13 @@ jobs:
           grep -q "versionName='${{ steps.meta.outputs.version }}'" signing-report/badging.txt
           grep -q "debuggable" signing-report/badging.txt && { echo "::error::APK is debuggable"; exit 1; } || true
           "$BT/aapt2" dump xmltree --file AndroidManifest.xml Zoomify.apk > signing-report/AndroidManifest.txt
-          grep -E "uses-permission|name=\"android.permission" signing-report/badging.txt || true
+          # Permission allow-list: no INTERNET (photos can't leave the phone) and no app-defined permissions
+          # (they break key-rotation updates on Android 11/12).
+          PERMS=$(grep -oP "^uses-permission: name='\K[^']+" signing-report/badging.txt | sort -u | tr '\n' ' ')
+          echo "Permissions: $PERMS"
+          [ "$PERMS" = "android.permission.CAMERA android.permission.RECORD_AUDIO android.permission.VIBRATE " ] \
+            || { echo "::error::Unexpected permissions: $PERMS"; exit 1; }
+          grep -q "E: permission " signing-report/AndroidManifest.txt && { echo "::error::APK defines a custom permission"; exit 1; } || true
           sha256sum Zoomify.apk | tee signing-report/Zoomify.apk.sha256
 
       - name: Get v1.0 (legacy-signed) for the rotation test
@@ -170,7 +176,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         api-level: [30, 31, 33]   # Android 11, 12, 13
     steps:
