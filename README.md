@@ -6,56 +6,74 @@ Camera apps for **Android** (`android/`, Kotlin + Jetpack Compose + CameraX) and
 
 ### Install the APK
 
-Every push that changes `android/` or `site/` is built by GitHub Actions (`.github/workflows/android.yml`).
-The workflow signs the APK, verifies it, then publishes it:
+**Download:** https://zoomify.houseli.site (or [GitHub Releases](https://github.com/Houssam-2021/Zoomify/releases/latest)).
+Requires Android 11 or newer.
 
-- **Every push:** a signed **test APK** plus a signing report (`Zoomify-apk-test` artifact on the Actions run).
-  Nothing public changes.
-- **Publishing:** *Actions → Android APK → Run workflow*, tick **publish**. This replaces the public
-  `android-latest` GitHub release and deploys the Cloudflare site. The site's `/Zoomify.apk` redirects to that
-  release, so the APK never hits Pages' file-size limit.
+### Build, verify and publish (`.github/workflows/android.yml`)
 
-You need Android 11 or newer.
+**Every push** builds, signs, verifies and tests. Nothing public changes.
 
-### Signing (important)
+1. **Build** an unsigned release APK.
+2. **Sign** with the new private key from secrets, plus a v3 rotation proof from the legacy key.
+3. **Mandatory verification.** Any failure stops the run:
+   - v3 signature present, with one signer: the new key `72:96:CD:BF…CC:CF`.
+   - The lineage is exactly *legacy → new*, and the legacy key has **rollback revoked**.
+   - `versionCode` / `versionName` match the build, and the APK is not debuggable.
+   - **Permission allow-list:** `CAMERA`, `RECORD_AUDIO`, `VIBRATE`. No `INTERNET`, and no app-defined permissions,
+     because those break rotation updates on Android 11/12.
+4. **Key-rotation tests on Android 11, 12 and 13 emulators:**
+   - v1.0 → v1.1 in-place update succeeds.
+   - An APK signed only with the leaked key is **rejected**.
+   - A clean install works, and a launch smoke test passes.
 
-The original signing key (`android/app/zoomify-sideload.keystore`) was committed publicly, so it is
-**compromised**. It is now used only for local debug builds, and as the *old signer* in a key rotation.
+**Publishing** is manual: *Actions → Android APK → Run workflow → tick **publish***. It runs only after all of the
+above pass, then:
 
-Public releases are signed in CI with a private key stored in GitHub secrets, plus an **APK Signature Scheme v3
-rotation proof**:
+- Creates the versioned release `v<versionName>` with security notes and the APK's SHA-256, and marks it Latest.
+  It **never deletes** releases. The old `android-latest` (1.0) release is kept with its download statistics and
+  relabelled "superseded".
+- Checks that the published APK is byte-identical to the verified build.
+- Deploys the website to Cloudflare Pages: first a **preview**, then automated page, link and redirect checks,
+  then **production**, then the checks again. `/download` redirects to the verified release's APK, so APK files
+  never sit on Cloudflare.
 
-- Existing installs accept the new APK as a normal update (settings are kept).
-- The old key loses its *rollback* capability. After a phone updates, an APK signed only with the leaked key can
-  no longer be installed over it.
-- New key certificate SHA-256: `72:96:CD:BF:1D:D6:13:C7:53:17:E4:5A:28:8F:AB:9B:C0:43:D8:2D:E5:33:9D:44:FB:EC:70:BF:91:A7:CC:CF`
+### Signing keys
 
-Required repository secrets (Settings → Secrets and variables → Actions):
+- `android/app/zoomify-sideload.keystore` is the **compromised legacy key**. It's used only as the old signer in the
+  rotation proof, and for local debug builds.
+- The new release key exists only in repository secrets `ZOOMIFY_KEYSTORE_B64` / `ZOOMIFY_KEYSTORE_PASSWORD`.
+  **Back it up.** Losing it means existing users can never be updated again.
 
-| Secret | Value |
+### Cloudflare Pages (free plan)
+
+1. Cloudflare → *My Profile → API Tokens → Create Token → Custom token*. Permission: **Account → Cloudflare Pages
+   → Edit**, limited to your account.
+2. Add repository secrets `CLOUDFLARE_API_TOKEN` (the token) and `CLOUDFLARE_ACCOUNT_ID` (shown on your Cloudflare
+   dashboard's *Workers & Pages* overview).
+3. Run the workflow with **publish**. It creates the `zoomify` Pages project, then tests the preview and
+   production URLs.
+4. **Switch the domain** (only after checking the `*.pages.dev` URL in your browser):
+   - *Workers & Pages → zoomify → Custom domains → Set up a domain →* `zoomify.houseli.site`.
+   - Cloudflare asks to replace the existing DNS record. Today that's a CNAME to Vercel in the `houseli.site`
+     zone; confirm so the record points at Pages.
+   - Wait for the domain to become *Active*. Then remove the domain from the Vercel project `zoomify-site`.
+
+### AdSense (prepared, not active)
+
+Nothing ad-related is served until you configure it. Use repository **variables** (Settings → Secrets and
+variables → Actions → Variables), not secrets:
+
+| Variable | Effect |
 |---|---|
-| `ZOOMIFY_KEYSTORE_B64` | The new PKCS12 keystore, base64-encoded (alias `zoomify`) |
-| `ZOOMIFY_KEYSTORE_PASSWORD` | Its password |
+| `ADSENSE_PUBLISHER_ID` | Your real ID (`pub-` plus 16 digits). Adds the AdSense script and `ads.txt`. Needed for site review. |
+| `ADSENSE_ENABLE_ADS` = `true` | Shows ad units. Only set this after approval. |
+| `ADSENSE_SLOT_HOME`, `ADSENSE_SLOT_HELP` | Ad unit IDs for the two slots, both placed away from download buttons |
+| `CONTACT_EMAIL` | Shows a contact email on the contact page |
 
-If those secrets are missing, the workflow fails on purpose and publishes nothing. **Back up the keystore.** If
-it is lost, existing users can never be updated again.
-
-### Cloudflare Pages (free, commercial use OK)
-
-The free plan has no usage-based billing, so it can't run up charges. The APK is served from GitHub Releases, so
-Pages' 25 MiB per-file limit doesn't apply to it.
-
-1. Create a free Cloudflare account. No payment method is needed. Don't enable paid products such as Workers Paid,
-   R2 or Stream.
-2. *My Profile → API Tokens → Create Token → Custom token*, with permission **Account → Cloudflare Pages → Edit**.
-3. Copy your **Account ID** from the dashboard sidebar.
-4. Add repository secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
-
-The next push creates the `zoomify` Pages project and deploys to `https://zoomify.pages.dev`. If that name is
-taken, Cloudflare adds a suffix. You can attach your own domain under *Workers & Pages → zoomify → Custom domains*.
-
-**AdSense:** after Google approves the site, paste its `<script>` tag where `site/index.html` says *AdSense*, and
-add `site/ads.txt` containing the line Google gives you (`google.com, pub-…, DIRECT, f08c47fec0942fa0`).
+- AdSense reviews the **root domain**, and `ads.txt` must be reachable at **`https://houseli.site/ads.txt`**.
+  `houseli.site` itself therefore needs to serve that file.
+- In AdSense, turn on **Privacy & messaging → a Google-certified consent message for the EEA, UK and Switzerland**
+  before ads are shown there.
 
 ### What it does
 
