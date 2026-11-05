@@ -9,9 +9,11 @@ Camera apps for **Android** (`android/`, Kotlin + Jetpack Compose + CameraX) and
 Every push that changes `android/` or `site/` is built by GitHub Actions (`.github/workflows/android.yml`).
 The workflow signs the APK, verifies it, then publishes it:
 
-- **Website (Cloudflare Pages):** `site/` is a download page with a privacy policy, ready for AdSense. The APK is
-  served from the same site.
-- **GitHub release** `android-latest`.
+- **Every push:** a signed **test APK** plus a signing report (`Zoomify-apk-test` artifact on the Actions run).
+  Nothing public changes.
+- **Publishing:** *Actions → Android APK → Run workflow*, tick **publish**. This replaces the public
+  `android-latest` GitHub release and deploys the Cloudflare site. The site's `/Zoomify.apk` redirects to that
+  release, so the APK never hits Pages' file-size limit.
 
 You need Android 11 or newer.
 
@@ -40,8 +42,8 @@ it is lost, existing users can never be updated again.
 
 ### Cloudflare Pages (free, commercial use OK)
 
-The free plan has no usage-based billing, so it can't run up charges. Pages' main free-plan limit that matters
-here is **25 MiB per file**, and the build checks the APK against it.
+The free plan has no usage-based billing, so it can't run up charges. The APK is served from GitHub Releases, so
+Pages' 25 MiB per-file limit doesn't apply to it.
 
 1. Create a free Cloudflare account. No payment method is needed. Don't enable paid products such as Workers Paid,
    R2 or Stream.

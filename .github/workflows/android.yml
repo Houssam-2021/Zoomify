@@ -7,6 +7,11 @@ on:
       - "site/**"
       - ".github/workflows/android.yml"
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish: replace the public android-latest release and deploy the Cloudflare site"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -21,6 +26,8 @@ jobs:
     env:
       HAS_SIGNING_KEY: ${{ secrets.ZOOMIFY_KEYSTORE_B64 != '' && secrets.ZOOMIFY_KEYSTORE_PASSWORD != '' }}
       HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+      # Pushes only make a signed test APK (an artifact). Publishing is a manual "Run workflow" with publish ticked.
+      PUBLISH: ${{ github.event_name == 'workflow_dispatch' && inputs.publish == true }}
     defaults:
       run:
         working-directory: android
@@ -81,15 +88,22 @@ jobs:
           echo "--- Rotation lineage ---"
           "$BT/apksigner" lineage --in Zoomify.apk --print-certs | tee "$RUNNER_TEMP/lineage.txt"
           grep -q "Verified using v3 scheme (APK Signature Scheme v3): true" "$RUNNER_TEMP/verify.txt"
+          grep -q "72:96:cd:bf:1d:d6:13:c7:53:17:e4:5a:28:8f:ab:9b:c0:43:d8:2d:e5:33:9d:44:fb:ec:70:bf:91:a7:cc:cf\|7296cdbf1dd613c75317e45a288fab9bc043d82de5339d44fbec70bf91a7cccf" \
+            <(tr 'A-F' 'a-f' < "$RUNNER_TEMP/verify.txt") || { echo "::error::APK is not signed with the expected new key"; exit 1; }
+          mkdir -p signing-report
+          cp "$RUNNER_TEMP/verify.txt" "$RUNNER_TEMP/lineage.txt" signing-report/
           rm -rf "$KEYDIR"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Zoomify-apk
-          path: android/Zoomify.apk
+          name: Zoomify-apk-test
+          path: |
+            android/Zoomify.apk
+            android/signing-report/
 
       - name: Publish as a GitHub release
+        if: env.PUBLISH == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -103,22 +117,19 @@ jobs:
 
       # Cloudflare Pages (free plan: commercial use allowed, no usage-based billing). Skipped until you add the
       # CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID secrets (see README).
+      # The APK itself stays on GitHub Releases (no Pages file-size limit); the site's /Zoomify.apk redirects there.
       - name: Prepare website
-        if: env.HAS_CLOUDFLARE == 'true'
+        if: env.PUBLISH == 'true' && env.HAS_CLOUDFLARE == 'true'
         run: |
           set -euo pipefail
           SIZE_BYTES=$(stat -c %s Zoomify.apk)
-          if [ "$SIZE_BYTES" -ge 26000000 ]; then
-            echo "::error::Zoomify.apk is over Cloudflare Pages' 25 MiB per-file limit."
-            exit 1
-          fi
-          rm -rf ../site-dist && cp -r ../site ../site-dist && cp Zoomify.apk ../site-dist/Zoomify.apk
+          rm -rf ../site-dist && cp -r ../site ../site-dist
           VERSION=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
           SIZE_MB=$(awk "BEGIN { printf \"%.1f\", $SIZE_BYTES / 1048576 }")
           sed -i "s/__VERSION__/$VERSION/; s/__BUILD__/${GITHUB_SHA::7}/; s/__SIZE__/$SIZE_MB/; s/__DATE__/$(date -u +%Y-%m-%d)/" ../site-dist/index.html
 
       - name: Deploy to Cloudflare Pages
-        if: env.HAS_CLOUDFLARE == 'true'
+        if: env.PUBLISH == 'true' && env.HAS_CLOUDFLARE == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

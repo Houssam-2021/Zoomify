@@ -14,8 +14,8 @@ android {
         applicationId = "com.zoomify.camera"
         minSdk = 30          // Android 11: CONTROL_ZOOM_RATIO, i.e. seamless 0.5x <-> 1x on multi-lens phones
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
     }
 
     // LEGACY KEY - COMPROMISED. This key was committed publicly, so it is only used for local debug builds and as
