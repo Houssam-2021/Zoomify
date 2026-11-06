@@ -33,7 +33,9 @@ jobs:
           cat > "$RUNNER_TEMP/classify.sh" <<'EOF'
           # classify <apk>: NEW | LEGACY-ONLY | UNVERIFIED | OTHER:<digest>
           out=$("$BT/apksigner" verify --print-certs "$1" 2>&1) || { echo UNVERIFIED; exit 0; }
-          d=$(grep -m1 -oP '^Signer #1 certificate SHA-256 digest: \K[0-9a-f]+' <<<"$out")
+          n=$(grep -cP 'certificate SHA-256 digest: [0-9a-f]{64}' <<<"$out")
+          d=$(grep -m1 -oP 'certificate SHA-256 digest: \K[0-9a-f]{64}' <<<"$out")
+          [ "$n" = 1 ] || { echo "OTHER:${n}-signers"; exit 0; }
           case "$d" in "$NEW_CERT_SHA256") echo NEW;; "$LEGACY_CERT_SHA256") echo LEGACY-ONLY;; *) echo "OTHER:$d";; esac
           EOF
 
@@ -116,8 +118,8 @@ jobs:
             res=$([ "$code" = 200 ] && [ "$sha" = "$V11_SHA256" ] && [ "$cls" = NEW ] && echo PASS || echo FAIL)
             echo "$res $url -> HTTP $code, sha256 ${sha:0:12}…, signer $cls"
             echo "- $res \`$url\` → HTTP $code, ${sha:0:12}…, $cls" >> "$GITHUB_STEP_SUMMARY"
-            # zoomify.houseli.site is still on Vercel, where /download may not exist: report, don't fail.
-            [ "$res" = PASS ] || [[ "$url" == https://zoomify.houseli.site/* ]] || bad=1
+            # The Pages production deployment and domain switch may not exist yet: report those, don't fail.
+            [ "$res" = PASS ] || [[ "$url" == https://zoomify.houseli.site/* || "$url" == https://zoomify-b0l.pages.dev/* ]] || bad=1
           done
           # The live site's own download links (whatever host serves it).
           home=$(curl -sS -L -A "Mozilla/5.0" https://zoomify.houseli.site/)
