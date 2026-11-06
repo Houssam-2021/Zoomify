@@ -1,0 +1,131 @@
+name: Security audit (APKs, artifacts, download links)
+
+# Checks who signed every APK in every GitHub release and every Actions artifact, verifies the official download links,
+# and checks that the private fixture draft isn't publicly visible.
+# With "delete" ticked, it removes PUBLIC release assets and artifacts that contain an APK signed only with the
+# compromised legacy key. It never touches the v1.1 release, any asset named Zoomify.apk, or the private fixture draft.
+on:
+  workflow_dispatch:
+    inputs:
+      delete:
+        description: "Delete public APKs/artifacts signed only with the compromised key"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # delete release assets
+  actions: write    # list/delete artifacts
+
+env:
+  NEW_CERT_SHA256: 7296cdbf1dd613c75317e45a288fab9bc043d82de5339d44fbec70bf91a7cccf
+  LEGACY_CERT_SHA256: 1a9f720214ac233d6f5be7e1ae5994911fbdab50d52ae43659521c0dab8dc12c
+  V11_SHA256: ebca94a408dad408bb4556f8ccf6addb83c7247e3a4ad685086798907194597a
+  GH_TOKEN: ${{ github.token }}
+  DELETE: ${{ inputs.delete }}
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Tools
+        run: |
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1); echo "BT=$BT" >> "$GITHUB_ENV"
+          cat > "$RUNNER_TEMP/classify.sh" <<'EOF'
+          # classify <apk>: NEW | LEGACY-ONLY | UNVERIFIED | OTHER:<digest>
+          out=$("$BT/apksigner" verify --print-certs "$1" 2>&1) || { echo UNVERIFIED; exit 0; }
+          d=$(grep -m1 -oP '^Signer #1 certificate SHA-256 digest: \K[0-9a-f]+' <<<"$out")
+          case "$d" in "$NEW_CERT_SHA256") echo NEW;; "$LEGACY_CERT_SHA256") echo LEGACY-ONLY;; *) echo "OTHER:$d";; esac
+          EOF
+
+      - name: Every APK in every release
+        run: |
+          set -uo pipefail
+          mkdir -p rel; bad=0
+          echo "| Release | Draft | Asset | Downloads | Signer (Android 11+) | Action |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|---|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate \
+            --jq '.[] | . as $r | .assets[] | select(.name|endswith(".apk")) | "\($r.id)\t\($r.tag_name)\t\($r.draft)\t\(.id)\t\(.name)\t\(.download_count)"' > assets.tsv
+          while IFS=$'\t' read -r rid tag draft aid name dl; do
+            gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$aid" > "rel/$aid.apk"
+            cls=$(bash "$RUNNER_TEMP/classify.sh" "rel/$aid.apk")
+            action=keep
+            if [ "$cls" = LEGACY-ONLY ] && [ "$draft" = false ]; then
+              if [ "$tag" = v1.1 ] || [ "$name" = Zoomify.apk ]; then
+                action="REFUSED (protected)"; bad=1
+              elif [ "$DELETE" = true ]; then
+                gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$aid" && action=DELETED || { action="DELETE FAILED"; bad=1; }
+              else action="would delete (dry run)"; fi
+            fi
+            [ "$draft" = true ] && [ "$cls" = LEGACY-ONLY ] && action="keep (private draft test fixture)"
+            echo "$tag draft=$draft $name ($dl downloads): $cls -> $action"
+            echo "| $tag | $draft | $name | $dl | $cls | $action |" >> "$GITHUB_STEP_SUMMARY"
+          done < assets.tsv
+          exit $bad
+
+      - name: Every Actions artifact
+        run: |
+          set -uo pipefail
+          mkdir -p art; n=0
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" --paginate \
+            --jq '.artifacts[] | select(.expired|not) | "\(.id)\t\(.name)\t\(.workflow_run.id)"' > artifacts.tsv
+          echo "Live artifacts: $(wc -l < artifacts.tsv)"
+          while IFS=$'\t' read -r id name run; do
+            rm -rf "art/$id"; mkdir -p "art/$id"
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "art/$id.zip" && unzip -q -o "art/$id.zip" -d "art/$id"
+            # Never ship private key material in artifacts.
+            if find "art/$id" -type f \( -iname '*.jks' -o -iname '*.keystore' -o -iname '*.p12' -o -iname '*.pfx' -o -iname '*.pem' \) | grep -q .; then
+              echo "::error::artifact $id ($name) contains key material"; n=1
+            fi
+            verdict=ok
+            for apk in $(find "art/$id" -name '*.apk'); do
+              cls=$(bash "$RUNNER_TEMP/classify.sh" "$apk"); echo "artifact $id $name (run $run): ${apk#art/$id/} -> $cls"
+              [ "$cls" = LEGACY-ONLY ] && verdict=legacy
+            done
+            if [ "$verdict" = legacy ]; then
+              if [ "$DELETE" = true ]; then
+                gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id" && echo "  DELETED artifact $id" || n=1
+              else echo "  would delete artifact $id (dry run)"; fi
+            fi
+          done < artifacts.tsv
+          exit $n
+
+      - name: The private fixture draft is not publicly visible
+        run: |
+          set -uo pipefail
+          # No token here: this is what an anonymous visitor sees.
+          pub=$(curl -sS "https://api.github.com/repos/$GITHUB_REPOSITORY/releases?per_page=100")
+          if grep -q "PRIVATE test fixtures" <<<"$pub"; then echo "::error::fixture draft is publicly listed"; exit 1; fi
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -L "https://github.com/$GITHUB_REPOSITORY/releases/download/test-fixtures-private/TEST-ONLY-legacy-attacker.apk")
+          echo "anonymous fixture download -> HTTP $code"; [ "$code" = 404 ] || exit 1
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -L "https://github.com/$GITHUB_REPOSITORY/releases/download/android-latest/Zoomify-1.0-old-key-superseded.apk")
+          echo "anonymous old v1.0 download -> HTTP $code"
+          if [ "$DELETE" = true ] && [ "$code" != 404 ]; then echo "::error::old v1.0 is still downloadable"; exit 1; fi
+          echo "Draft not publicly visible: verified anonymously" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Official download links serve the verified v1.1 (new key)
+        run: |
+          set -uo pipefail; bad=0
+          for url in \
+            https://github.com/Houssam-2021/Zoomify/releases/download/v1.1/Zoomify.apk \
+            https://github.com/Houssam-2021/Zoomify/releases/download/android-latest/Zoomify.apk \
+            https://github.com/Houssam-2021/Zoomify/releases/latest/download/Zoomify.apk \
+            https://zoomify-b0l.pages.dev/download \
+            https://zoomify.houseli.site/download ; do
+            code=$(curl -sS -L -A "Mozilla/5.0" -o dl.apk -w '%{http_code}' "$url")
+            sha=$(sha256sum dl.apk | cut -d' ' -f1); cls=$(bash "$RUNNER_TEMP/classify.sh" dl.apk)
+            res=$([ "$code" = 200 ] && [ "$sha" = "$V11_SHA256" ] && [ "$cls" = NEW ] && echo PASS || echo FAIL)
+            echo "$res $url -> HTTP $code, sha256 ${sha:0:12}…, signer $cls"
+            echo "- $res \`$url\` → HTTP $code, ${sha:0:12}…, $cls" >> "$GITHUB_STEP_SUMMARY"
+            # zoomify.houseli.site is still on Vercel, where /download may not exist: report, don't fail.
+            [ "$res" = PASS ] || [[ "$url" == https://zoomify.houseli.site/* ]] || bad=1
+          done
+          # The live site's own download links (whatever host serves it).
+          home=$(curl -sS -L -A "Mozilla/5.0" https://zoomify.houseli.site/)
+          echo "live home page: $(wc -c <<<"$home") bytes"
+          for href in $(grep -oE 'href="[^"]*(download|\.apk)[^"]*"' <<<"$home" | sed -E 's/^href="|"$//g' | sort -u); do
+            case "$href" in /*) href="https://zoomify.houseli.site$href";; http*) ;; *) continue;; esac
+            curl -sS -L -A "Mozilla/5.0" -o dl.apk "$href"; sha=$(sha256sum dl.apk | cut -d' ' -f1); cls=$(bash "$RUNNER_TEMP/classify.sh" dl.apk)
+            res=$([ "$sha" = "$V11_SHA256" ] && [ "$cls" = NEW ] && echo PASS || echo FAIL); [ $res = PASS ] || bad=1
+            echo "$res live-site link $href -> ${sha:0:12}…, $cls"; echo "- $res live-site link \`$href\` → $cls" >> "$GITHUB_STEP_SUMMARY"
+          done
+          exit $bad
