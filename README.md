@@ -44,19 +44,39 @@ above pass, then:
 - The new release key exists only in repository secrets `ZOOMIFY_KEYSTORE_B64` / `ZOOMIFY_KEYSTORE_PASSWORD`.
   **Back it up.** Losing it means existing users can never be updated again.
 
-### Cloudflare Pages (free plan)
+### Old download link
 
-1. Cloudflare → *My Profile → API Tokens → Create Token → Custom token*. Permission: **Account → Cloudflare Pages
-   → Edit**, limited to your account.
-2. Add repository secrets `CLOUDFLARE_API_TOKEN` (the token) and `CLOUDFLARE_ACCOUNT_ID` (shown on your Cloudflare
-   dashboard's *Workers & Pages* overview).
-3. Run the workflow with **publish**. It creates the `zoomify` Pages project, then tests the preview and
-   production URLs.
-4. **Switch the domain** (only after checking the `*.pages.dev` URL in your browser):
-   - *Workers & Pages → zoomify → Custom domains → Set up a domain →* `zoomify.houseli.site`.
-   - Cloudflare asks to replace the existing DNS record. Today that's a CNAME to Vercel in the `houseli.site`
-     zone; confirm so the record points at Pages.
-   - Wait for the domain to become *Active*. Then remove the domain from the Vercel project `zoomify-site`.
+`releases/download/android-latest/Zoomify.apk` was shared widely while it served 1.0, which was signed with the
+leaked key. GitHub can't redirect release-asset URLs, but it serves them by file name, and renaming an asset keeps
+its download count. So that release now holds the verified v1.1 as `Zoomify.apk`, and the original 1.0 file is
+kept as `Zoomify-1.0-old-key-superseded.apk` with its download history. Every new publish repeats this
+(`.github/scripts/refresh-legacy-link.sh`). To run it on its own: *Actions → Point the old android-latest link at a
+verified release*.
+
+### Website on Cloudflare Pages (`site.yml`)
+
+The website-only workflow doesn't build Android, run emulators or create releases. It uses the existing Pages
+project `zoomify` (`zoomify-b0l.pages.dev`) and never creates another one.
+
+**One-time setup, about 3 minutes** (never paste the token anywhere except the GitHub secret form):
+
+1. Cloudflare dashboard → *My Profile → API Tokens → Create Token → Create Custom Token*, with these permissions:
+   - **Account → Cloudflare Pages → Edit**
+   - **Zone → DNS → Edit** and **Zone → Zone → Read**, with *Zone Resources* = `houseli.site` only. These two are
+     needed only for the automatic domain switch.
+2. Copy your **Account ID** from *Workers & Pages* (right-hand sidebar).
+3. GitHub → this repo → *Settings → Secrets and variables → Actions → New repository secret*:
+   `CLOUDFLARE_API_TOKEN`, then `CLOUDFLARE_ACCOUNT_ID`.
+
+**Deploy:** *Actions → Website (Cloudflare Pages) → Run workflow*:
+
+| Inputs | What happens |
+|---|---|
+| (none) | Deploys a **preview**, then tests every page, link, download redirect, the APK checksum, HTTPS, and phone and desktop layout (Chromium) |
+| `production` | Preview, tests, **production** at `https://zoomify-b0l.pages.dev`, then the tests again |
+| `production` + `switch_domain` | All of the above, then attaches `zoomify.houseli.site` to the project and changes its DNS record from Vercel to Pages. It logs the old record, waits until Pages serves the new build, and re-runs every test on the real domain. **If anything fails, it restores the old Vercel record automatically.** |
+
+Keep the domain on Vercel until the switch has passed. Then remove it from the Vercel project `zoomify-site`.
 
 ### AdSense (prepared, not active)
 
@@ -70,8 +90,11 @@ variables → Actions → Variables), not secrets:
 | `ADSENSE_SLOT_HOME`, `ADSENSE_SLOT_HELP` | Ad unit IDs for the two slots, both placed away from download buttons |
 | `CONTACT_EMAIL` | Shows a contact email on the contact page |
 
-- AdSense reviews the **root domain**, and `ads.txt` must be reachable at **`https://houseli.site/ads.txt`**.
-  `houseli.site` itself therefore needs to serve that file.
+- **Account:** AdSense requires you to be 18 or older. Otherwise a parent or guardian signs up with *their own*
+  Google account, and payments go to them.
+- **Site and ads.txt:** Google uses the **root domain's** `ads.txt`. Add `houseli.site` in AdSense, and make sure
+  `https://houseli.site/ads.txt` contains the publisher line. Setting `ADSENSE_PUBLISHER_ID` adds a copy on
+  `zoomify.houseli.site`, but the root file is the one that counts.
 - In AdSense, turn on **Privacy & messaging → a Google-certified consent message for the EEA, UK and Switzerland**
   before ads are shown there.
 

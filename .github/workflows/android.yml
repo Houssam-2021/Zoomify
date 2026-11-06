@@ -3,18 +3,18 @@ name: Android APK
 # Every push: build, sign (new key + v3 rotation proof), verify, audit, and test the key rotation on Android 11/12/13
 # emulators. Nothing public changes.
 # Publishing: Actions -> Android APK -> Run workflow, tick "publish". Only runs after every check above passes.
+# The website is deployed separately by site.yml; its /download link always follows the latest verified release.
 
 on:
   push:
     paths:
       - "android/**"
-      - "site/**"
       - ".github/workflows/android.yml"
       - ".github/scripts/**"
   workflow_dispatch:
     inputs:
       publish:
-        description: "Publish: create the versioned GitHub release and deploy the website to Cloudflare Pages"
+        description: "Publish: create the versioned GitHub release (and refresh the old android-latest link)"
         type: boolean
         default: false
 
@@ -305,132 +305,3 @@ jobs:
           set -euo pipefail
           curl -sSfL -o published.apk "https://github.com/${{ github.repository }}/releases/download/$TAG/Zoomify.apk"
           cmp published.apk dist/Zoomify.apk && echo "Published APK is byte-identical to the verified build"
-
-  deploy-site:
-    needs: [build, publish]
-    if: github.event_name == 'workflow_dispatch' && inputs.publish
-    runs-on: ubuntu-latest
-    env:
-      HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      TAG: ${{ needs.publish.outputs.tag }}
-      ADSENSE_PUBLISHER_ID: ${{ vars.ADSENSE_PUBLISHER_ID }}
-      ADSENSE_ENABLE_ADS: ${{ vars.ADSENSE_ENABLE_ADS }}
-      ADSENSE_SLOT_HOME: ${{ vars.ADSENSE_SLOT_HOME }}
-      ADSENSE_SLOT_HELP: ${{ vars.ADSENSE_SLOT_HELP }}
-      CONTACT_EMAIL: ${{ vars.CONTACT_EMAIL }}
-    steps:
-      - name: Cloudflare secrets missing
-        if: env.HAS_CLOUDFLARE != 'true'
-        run: |
-          echo "::error::Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repository secrets to deploy the website (see README)."
-          exit 1
-      - uses: actions/checkout@v4
-      - name: Build the site
-        run: |
-          set -euo pipefail
-          rm -rf site-dist && cp -r site site-dist
-          sed -i "s/__RELEASE_TAG__/$TAG/g" site-dist/_redirects
-          # AdSense: only with a real publisher ID from the ADSENSE_PUBLISHER_ID repository variable. Never invented.
-          if [ -n "$ADSENSE_PUBLISHER_ID" ]; then
-            [[ "$ADSENSE_PUBLISHER_ID" =~ ^pub-[0-9]{16}$ ]] || { echo "::error::ADSENSE_PUBLISHER_ID must look like pub-0000000000000000"; exit 1; }
-            TAGLINE="<script async src=\"https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-$ADSENSE_PUBLISHER_ID\" crossorigin=\"anonymous\"></script>"
-            for f in site-dist/*.html; do python3 - "$f" "$TAGLINE" <<'PY'
-          import sys; p, tag = sys.argv[1], sys.argv[2]
-          t = open(p, encoding="utf-8").read().replace("<!-- ADSENSE_HEAD -->", tag)
-          open(p, "w", encoding="utf-8").write(t)
-          PY
-            done
-            echo "google.com, $ADSENSE_PUBLISHER_ID, DIRECT, f08c47fec0942fa0" > site-dist/ads.txt
-            # Ad units stay hidden unless ads are explicitly enabled (after AdSense approval).
-            if [ "$ADSENSE_ENABLE_ADS" = "true" ]; then
-              python3 - <<'PY'
-          import os, re
-          pub = os.environ["ADSENSE_PUBLISHER_ID"]
-          slots = {"home-mid": os.environ.get("ADSENSE_SLOT_HOME", ""), "help-mid": os.environ.get("ADSENSE_SLOT_HELP", "")}
-          for f in ("site-dist/index.html", "site-dist/help.html"):
-              t = open(f, encoding="utf-8").read()
-              for name, slot in slots.items():
-                  if not re.fullmatch(r"[0-9]{6,12}", slot or ""): continue
-                  unit = (f'<div class="ad-slot container" data-ad-slot="{name}" aria-label="Advertisement">'
-                          f'<p style="font-size:11px;letter-spacing:.12em;color:#a09fa9;margin:0 0 6px">ADVERTISEMENT</p>'
-                          f'<ins class="adsbygoogle" style="display:block" data-ad-client="ca-{pub}" data-ad-slot="{slot}" '
-                          f'data-ad-format="auto" data-full-width-responsive="true"></ins>'
-                          f'<script>(adsbygoogle=window.adsbygoogle||[]).push({{}});</script></div>')
-                  t = re.sub(rf'<div class="ad-slot( container)?" data-ad-slot="{name}" hidden aria-label="Advertisement"></div>', unit, t)
-              open(f, "w", encoding="utf-8").write(t)
-          PY
-            fi
-          fi
-          if [ -n "$CONTACT_EMAIL" ]; then
-            sed -i "s|<!-- CONTACT_EMAIL -->|<p><b>Email:</b> <a href=\"mailto:$CONTACT_EMAIL\">$CONTACT_EMAIL</a></p>|" site-dist/contact.html
-          fi
-          grep -rL "__RELEASE_TAG__" site-dist/_redirects >/dev/null
-
-      - name: Verify site checker
-        run: |
-          cat > check-site.sh <<'EOF'
-          #!/usr/bin/env bash
-          # Usage: check-site.sh BASE_URL   -- fails on any broken page, link or redirect.
-          set -uo pipefail
-          BASE=${1%/}; ok=1
-          check() { code=$(curl -sS -o /dev/null -w '%{http_code}' "$BASE$1"); echo "$code $1"; [ "$code" = "$2" ] || ok=0; }
-          check / 200; check /help.html 200; check /privacy.html 200; check /contact.html 200
-          check /robots.txt 200; check /sitemap.xml 200; check /this-page-does-not-exist 404
-          loc=$(curl -sS -o /dev/null -w '%{redirect_url}' "$BASE/download"); echo "/download -> $loc"
-          [ "$loc" = "https://github.com/Houssam-2021/Zoomify/releases/download/$TAG/Zoomify.apk" ] || ok=0
-          code=$(curl -sS -L -o /tmp/site.apk -w '%{http_code}' "$BASE/download"); echo "download follows to $code, $(stat -c %s /tmp/site.apk) bytes"
-          [ "$code" = "200" ] && [ "$(stat -c %s /tmp/site.apk)" -gt 1000000 ] || ok=0
-          loc=$(curl -sS -o /dev/null -w '%{redirect_url}' "$BASE/release-notes"); echo "/release-notes -> $loc"
-          [ "$loc" = "https://github.com/Houssam-2021/Zoomify/releases/tag/$TAG" ] || ok=0
-          curl -sS "$BASE/" | grep -q 'href="/download"' || { echo "home page has no /download link"; ok=0; }
-          curl -sS "$BASE/" | grep -q 'android-latest' && { echo "home page still links android-latest"; ok=0; }
-          # Every internal link on every page must resolve.
-          for page in / /help.html /privacy.html /contact.html; do
-            for href in $(curl -sS "$BASE$page" | grep -oE 'href="/[^"#]*' | sed 's/href="//' | sort -u); do
-              c=$(curl -sS -o /dev/null -w '%{http_code}' "$BASE$href"); [ "$c" = 200 ] || [ "$c" = 302 ] || [ "$c" = 301 ] || { echo "BROKEN $page -> $href ($c)"; ok=0; }
-            done
-          done
-          # External links (GitHub, policies) must resolve too.
-          for href in $(curl -sS "$BASE/" "$BASE/help.html" "$BASE/privacy.html" "$BASE/contact.html" | grep -oE 'href="https://[^"]+' | sed 's/href="//' | sort -u); do
-            c=$(curl -sS -L -o /dev/null -w '%{http_code}' -A "Mozilla/5.0" "$href"); echo "$c $href"
-            [[ "$c" =~ ^(200|403|429)$ ]] || { echo "BROKEN external $href ($c)"; ok=0; }
-          done
-          [ $ok = 1 ] && echo "SITE CHECK PASSED: $BASE" || { echo "SITE CHECK FAILED: $BASE"; exit 1; }
-          EOF
-          chmod +x check-site.sh
-
-      - name: Create the Pages project (if needed) and deploy a preview
-        id: preview
-        run: |
-          set -euo pipefail
-          npx --yes wrangler@4 pages project create zoomify --production-branch=main 2>&1 | tail -3 || true
-          npx --yes wrangler@4 pages deploy site-dist --project-name=zoomify --branch=preview --commit-dirty=true | tee preview.log
-          URL=$(grep -oE 'https://[a-z0-9.-]+\.pages\.dev' preview.log | tail -1)
-          echo "url=$URL" >> "$GITHUB_OUTPUT"
-          echo "Preview: $URL"
-
-      - name: Test the preview
-        run: |
-          sleep 20
-          ./check-site.sh "${{ steps.preview.outputs.url }}"
-
-      - name: Deploy to production (pages.dev) only after the preview passed
-        id: prod
-        run: |
-          set -euo pipefail
-          npx --yes wrangler@4 pages deploy site-dist --project-name=zoomify --branch=main --commit-dirty=true | tee prod.log
-          SUB=$(curl -sS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/zoomify" \
-            | python3 -c "import sys,json; print(json.load(sys.stdin)['result']['subdomain'])")
-          echo "url=https://$SUB" >> "$GITHUB_OUTPUT"
-          echo "Production: https://$SUB"
-
-      - name: Test production
-        run: |
-          sleep 20
-          ./check-site.sh "${{ steps.prod.outputs.url }}"
-          echo "### Website deployed" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Production: ${{ steps.prod.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Next: attach zoomify.houseli.site in Cloudflare Pages -> zoomify -> Custom domains (see README)." >> "$GITHUB_STEP_SUMMARY"

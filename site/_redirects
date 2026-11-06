@@ -1,7 +1,7 @@
-# __RELEASE_TAG__ is replaced by CI with the GitHub Release that just passed signing checks.
-/download        https://github.com/Houssam-2021/Zoomify/releases/download/__RELEASE_TAG__/Zoomify.apk 302
-/Zoomify.apk     https://github.com/Houssam-2021/Zoomify/releases/download/__RELEASE_TAG__/Zoomify.apk 302
-/release-notes   https://github.com/Houssam-2021/Zoomify/releases/tag/__RELEASE_TAG__ 302
+# "latest" is always the newest release published by the verified pipeline (android.yml marks each one Latest).
+/download        https://github.com/Houssam-2021/Zoomify/releases/latest/download/Zoomify.apk 302
+/Zoomify.apk     https://github.com/Houssam-2021/Zoomify/releases/latest/download/Zoomify.apk 302
+/release-notes   https://github.com/Houssam-2021/Zoomify/releases/latest 302
 /privacy         /privacy.html 301
 /help            /help.html 301
 /contact         /contact.html 301
