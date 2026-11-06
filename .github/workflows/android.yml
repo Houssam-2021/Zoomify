@@ -286,15 +286,17 @@ jobs:
             --title "Zoomify $VERSION (security update)" --notes-file notes.md --target "$GITHUB_SHA" --latest
           echo "Released $TAG"
 
-      - name: Mark the old android-latest release as superseded (kept, with its download statistics)
+      - uses: actions/checkout@v4
+        with:
+          path: repo
+      # The widely shared old URL (releases/download/android-latest/Zoomify.apk) must serve the newest verified APK.
+      - name: Point the old android-latest link at this release (history kept, nothing deleted)
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ steps.release.outputs.tag }}
         run: |
-          if gh release view android-latest >/dev/null 2>&1; then
-            gh release edit android-latest --title "Zoomify 1.0 (superseded: install $TAG)" --notes "This is the old Zoomify 1.0 build, kept for history. **Please install [$TAG](https://github.com/$GH_REPO/releases/tag/$TAG) instead.** It's a security update that installs over 1.0 and keeps your photos."
-          fi
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1) bash repo/.github/scripts/refresh-legacy-link.sh dist/Zoomify.apk "$TAG"
 
       - name: Verify the published APK
         env:
