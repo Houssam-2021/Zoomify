@@ -5,8 +5,16 @@ BASE=${1%/}; ok=1; REPO=Houssam-2021/Zoomify
 LATEST=$(curl -sS -o /dev/null -w '%{redirect_url}' "https://github.com/$REPO/releases/latest" | sed 's#.*/tag/##')
 echo "Latest verified release: $LATEST"
 check() { code=$(curl -sS -o /dev/null -w '%{http_code}' "$BASE$1"); echo "$code $1"; [ "$code" = "$2" ] || { echo "  expected $2"; ok=0; }; }
-check / 200; check /help.html 200; check /privacy.html 200; check /contact.html 200; check /assets/pages.css 200
+# follows PATH through at most 5 redirects; it must end with HTTP 200 on this same site (no loops, no off-site hop).
+follow() {
+  r=$(curl -sS -L --max-redirs 5 -o /dev/null -w '%{http_code} %{num_redirects} %{url_effective}' "$BASE$1")
+  read -r fc fn fu <<<"$r"; echo "$1 -> $fn redirects -> $fc $fu"
+  [ "$fc" = 200 ] && [[ "$fu" == "$BASE"/* || "$fu" == "$BASE" ]] || { echo "  expected a final 200 on $BASE"; ok=0; }
+}
+check / 200; check /help 200; check /privacy 200; check /contact 200; check /assets/pages.css 200
 check /robots.txt 200; check /sitemap.xml 200; check /this-page-does-not-exist 404
+# Old .html addresses must still work (Cloudflare 308-redirects them to the pretty URL).
+follow /help.html; follow /privacy.html; follow /contact.html
 for path in /download /Zoomify.apk; do
   final=$(curl -sS -L -o /tmp/site.apk -w '%{http_code} %{url_effective}' "$BASE$path")
   hops=$(curl -sS -L -o /dev/null -w '%{num_redirects}' "$BASE$path")
@@ -23,14 +31,20 @@ case "$BASE" in https://*)
   code=$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' "$http/"); echo "HTTP -> $code"
   [[ "$code" == 30[178]\ https://* ]] || { echo "  plain HTTP is not redirected to HTTPS"; ok=0; } ;;
 esac
-curl -sS "$BASE/" | grep -q 'href="/download"' || { echo "home page has no /download link"; ok=0; }
-curl -sS "$BASE/" "$BASE/help.html" | grep -q 'android-latest' && { echo "site still mentions android-latest"; ok=0; }
-for page in / /help.html /privacy.html /contact.html /404.html; do
-  for href in $(curl -sS "$BASE$page" | grep -oE 'href="/[^"#]*' | sed 's/href="//' | sort -u); do
-    c=$(curl -sS -o /dev/null -w '%{http_code}' "$BASE$href"); [[ "$c" =~ ^(200|301|302)$ ]] || { echo "BROKEN $page -> $href ($c)"; ok=0; }
+# Fetch bodies into variables first: piping curl into "grep -q" can kill curl with SIGPIPE (curl error 23).
+HOME_HTML=$(curl -sS -L "$BASE/") || { echo "could not fetch home page"; ok=0; }
+HELP_HTML=$(curl -sS -L "$BASE/help") || { echo "could not fetch help page"; ok=0; }
+grep -F 'href="/download"' >/dev/null <<<"$HOME_HTML" || { echo "home page has no /download link"; ok=0; }
+grep -F 'android-latest' >/dev/null <<<"$HOME_HTML$HELP_HTML" && { echo "site still mentions android-latest"; ok=0; }
+# Internal links: follow redirects (301/302/307/308) and require a successful final response.
+for page in / /help /privacy /contact /404.html; do
+  body=$(curl -sS -L "$BASE$page")
+  for href in $(grep -oE 'href="/[^"#]*' <<<"$body" | sed 's/href="//' | sort -u); do
+    r=$(curl -sS -L --max-redirs 8 -r 0-1023 -o /dev/null -w '%{http_code} %{num_redirects}' "$BASE$href")
+    read -r c n <<<"$r"; [[ "$c" =~ ^(200|206)$ ]] || { echo "BROKEN $page -> $href (final $c after $n redirects)"; ok=0; }
   done
 done
-for href in $(curl -sS "$BASE/" "$BASE/help.html" "$BASE/privacy.html" "$BASE/contact.html" | grep -oE 'href="https://[^"]+' | sed 's/href="//' | sort -u); do
+for href in $(curl -sS -L "$BASE/" "$BASE/help" "$BASE/privacy" "$BASE/contact" | grep -oE 'href="https://[^"]+' | sed 's/href="//' | sort -u); do
   c=$(curl -sS -L -o /dev/null -w '%{http_code}' -A "Mozilla/5.0" "$href"); echo "$c $href"
   [[ "$c" =~ ^(200|403|429)$ ]] || { echo "BROKEN external $href ($c)"; ok=0; }
 done

@@ -3,7 +3,7 @@
 const { chromium } = require('playwright');
 (async () => {
 const [base, out = 'layout'] = process.argv.slice(2);
-const pages = ['/', '/help.html', '/privacy.html', '/contact.html', '/404.html'];
+const pages = ['/', '/help', '/privacy', '/contact', '/404.html'];
 const sizes = { phone: { width: 390, height: 844 }, desktop: { width: 1366, height: 900 } };
 const browser = await chromium.launch();
 let failed = 0;

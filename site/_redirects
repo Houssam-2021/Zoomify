@@ -2,6 +2,5 @@
 /download        https://github.com/Houssam-2021/Zoomify/releases/latest/download/Zoomify.apk 302
 /Zoomify.apk     https://github.com/Houssam-2021/Zoomify/releases/latest/download/Zoomify.apk 302
 /release-notes   https://github.com/Houssam-2021/Zoomify/releases/latest 302
-/privacy         /privacy.html 301
-/help            /help.html 301
-/contact         /contact.html 301
+# Pretty URLs (/help, /privacy, /contact) are built into Cloudflare Pages: it serves help.html at /help and
+# 308-redirects /help.html -> /help. Do not add "/help /help.html" rules here; they would loop.
