@@ -6,6 +6,9 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Bump for every release. CI can override it for test-only builds (-PzoomifyTestVersionCode=N); those are never published.
+val zoomifyVersionCode = 2
+
 android {
     namespace = "com.zoomify.camera"
     compileSdk = 36
@@ -14,7 +17,7 @@ android {
         applicationId = "com.zoomify.camera"
         minSdk = 30          // Android 11: CONTROL_ZOOM_RATIO, i.e. seamless 0.5x <-> 1x on multi-lens phones
         targetSdk = 35
-        versionCode = 2
+        versionCode = (project.findProperty("zoomifyTestVersionCode") as String?)?.toInt() ?: zoomifyVersionCode
         versionName = "1.1"
     }
 
