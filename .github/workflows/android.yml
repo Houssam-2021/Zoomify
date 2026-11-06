@@ -152,9 +152,17 @@ jobs:
       - name: Get v1.0 (legacy-signed) for the rotation test
         run: |
           set -euo pipefail
+          # android-latest/Zoomify.apk now serves the newest release; the original v1.0 is kept beside it.
           curl -sSfL -o test-apks/zoomify-1.0-legacy.apk \
-            https://github.com/Houssam-2021/Zoomify/releases/download/android-latest/Zoomify.apk
-          "$BT/apksigner" verify --print-certs test-apks/zoomify-1.0-legacy.apk | grep "SHA-256 digest: $LEGACY_CERT_SHA256"
+            https://github.com/Houssam-2021/Zoomify/releases/download/android-latest/Zoomify-1.0-old-key-superseded.apk
+          CERTS=$("$BT/apksigner" verify --print-certs test-apks/zoomify-1.0-legacy.apk)
+          grep -q "SHA-256 digest: $LEGACY_CERT_SHA256" <<<"$CERTS" \
+            || { echo "::error::v1.0 test APK is not signed with the legacy key"; echo "$CERTS"; exit 1; }
+          [ "$(grep -c 'certificate SHA-256 digest' <<<"$CERTS")" -eq 1 ] \
+            || { echo "::error::v1.0 test APK must have exactly one (legacy) signer"; exit 1; }
+          BADGING=$("$BT/aapt2" dump badging test-apks/zoomify-1.0-legacy.apk)
+          grep -q "versionCode='1'" <<<"$BADGING" \
+            || { echo "::error::v1.0 test APK is not versionCode 1"; exit 1; }
           cp Zoomify.apk test-apks/Zoomify.apk
 
       - name: Upload signed APK and report
