@@ -69,7 +69,17 @@ jobs:
           set -euo pipefail
           curl -sSfL -o "$RUNNER_TEMP/v1.1.apk" https://github.com/Houssam-2021/Zoomify/releases/download/v1.1/Zoomify.apk
           echo "$V11_SHA256  $RUNNER_TEMP/v1.1.apk" | sha256sum -c
-          "$BT/apksigner" lineage --in "$RUNNER_TEMP/v1.1.apk" --out fixtures/zoomify-v1.1.lineage
+          # Write v1.1's lineage unchanged, using apksigner's own library (apksig).
+          cat > "$RUNNER_TEMP/ExtractLineage.java" <<'JAVA'
+          import com.android.apksig.SigningCertificateLineage;
+          import java.io.File;
+          public class ExtractLineage {
+            public static void main(String[] a) throws Exception {
+              SigningCertificateLineage.readFromApkFile(new File(a[0])).writeToFile(new File(a[1]));
+            }
+          }
+          JAVA
+          java -cp "$BT/lib/apksigner.jar" "$RUNNER_TEMP/ExtractLineage.java" "$RUNNER_TEMP/v1.1.apk" fixtures/zoomify-v1.1.lineage
           "$BT/apksigner" lineage --in fixtures/zoomify-v1.1.lineage --print-certs -v
           echo "LINEAGE_BASE64_BEGIN"; base64 -w0 fixtures/zoomify-v1.1.lineage; echo; echo "LINEAGE_BASE64_END"
 
