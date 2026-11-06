@@ -17,8 +17,8 @@ Requires Android 11 or newer.
 2. **Sign** with the new private key from secrets plus the v3 rotation proof copied from v1.1
    (`android/signing/zoomify-v1.1.lineage`). **No old private key is involved.**
 3. **Mandatory verification.** Any failure stops the run:
-   - v3 signature present, with one signer: the new key `72:96:CD:BF…CC:CF`. The v2 signature is the new key too, so
-     there is no signature by the compromised key anywhere in the APK.
+   - Signed with **v3 only**, one signer: the new key `72:96:CD:BF…CC:CF`. There's no v1/v2 block, so the APK
+     carries no signature by the compromised key. Android 11+ always checks v3.
    - The lineage is exactly *legacy → new*, and the legacy key has **rollback revoked**.
    - `versionCode` / `versionName` match the build, and the APK is not debuggable.
    - **Permission allow-list:** `CAMERA`, `RECORD_AUDIO`, `VIBRATE`. No `INTERNET`, and no app-defined permissions,

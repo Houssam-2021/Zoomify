@@ -99,6 +99,7 @@ jobs:
             "$BT/zipalign" -p -f 4 "$1" "$KEYDIR/aligned.apk"
             "$BT/apksigner" sign --ks "$KEYDIR/new.p12" --ks-type PKCS12 --ks-pass env:ZOOMIFY_KEYSTORE_PASSWORD \
               --ks-key-alias zoomify --lineage signing/zoomify-v1.1.lineage --rotation-min-sdk-version 28 \
+              --v1-signing-enabled false --v2-signing-enabled false --v3-signing-enabled true \
               --out "$2" "$KEYDIR/aligned.apk"
           }
           sign "$RUNNER_TEMP/release-unsigned.apk" Zoomify.apk
@@ -120,12 +121,11 @@ jobs:
             grep -q "Number of signers: 1" "signing-report/$2-verify.txt"
             grep -q "certificate SHA-256 digest: $NEW_CERT_SHA256" "signing-report/$2-verify.txt" \
               || { echo "::error::$1 is not signed with the new release key"; exit 1; }
-            # The v2 signature (what pre-rotation platforms check) must also be the new key: no signature by the
-            # compromised key anywhere in the APK.
-            "$BT/apksigner" verify --print-certs --min-sdk-version 24 --max-sdk-version 27 "$1" > "signing-report/$2-v2.txt"
-            grep -q "certificate SHA-256 digest: $NEW_CERT_SHA256" "signing-report/$2-v2.txt" \
-              && ! grep -q "$LEGACY_CERT_SHA256" "signing-report/$2-v2.txt" \
-              || { echo "::error::$1 has a v2 signature that isn't the new key"; cat "signing-report/$2-v2.txt"; exit 1; }
+            # v3 only (minSdk 30 always verifies v3): no v1/v2 block, so the APK carries no signature by the compromised
+            # key. (v1/v2 signatures would have to be made by the oldest key in the lineage.)
+            grep -q "Verified using v1 scheme (JAR signing): false" "signing-report/$2-verify.txt"
+            grep -q "Verified using v2 scheme (APK Signature Scheme v2): false" "signing-report/$2-verify.txt" \
+              || { echo "::error::$1 has a v1/v2 signature"; exit 1; }
             # Lineage must be exactly: legacy (rollback revoked) -> new key.
             LINEAGE_TXT="signing-report/$2-lineage.txt" python3 - <<'PY'
           import os, re
