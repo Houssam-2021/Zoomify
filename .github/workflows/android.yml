@@ -10,7 +10,8 @@ on:
     paths:
       - "android/**"
       - ".github/workflows/android.yml"
-      - ".github/scripts/**"
+      - ".github/scripts/rotation-test.sh"
+      - ".github/scripts/refresh-legacy-link.sh"
   workflow_dispatch:
     inputs:
       publish:
