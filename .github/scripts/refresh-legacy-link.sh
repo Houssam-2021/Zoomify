@@ -59,6 +59,6 @@ gh release edit "$LEGACY_TAG" --title "Zoomify (old link): now serves $TAG" --no
 - SHA-256: \`$WANT_SHA\`
 - Signing certificate SHA-256: \`72:96:CD:BF:1D:D6:13:C7:53:17:E4:5A:28:8F:AB:9B:C0:43:D8:2D:E5:33:9D:44:FB:EC:70:BF:91:A7:CC:CF\`
 
-Install it over your current Zoomify: it updates in place and keeps your photos. Earlier builds in this release are kept under their own names for history only. Please don't install them.
+Install it over your current Zoomify: it updates in place and keeps your photos. The original 1.0 build was signed with a key that later became public, so it has been removed. Earlier new-key builds may be kept here under their own names for history only; please install \`Zoomify.apk\`.
 
 Official download page: https://zoomify.houseli.site"
