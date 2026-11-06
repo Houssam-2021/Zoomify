@@ -8,3 +8,22 @@ xcuserdata/
 local.properties
 .idea/
 *.iml
+
+# Signing keys and credentials: never commit these (release signing uses GitHub Actions secrets).
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+*.p8
+*.der
+*.mobileprovision
+*.b64
+keystore.properties
+signing.properties
+*KEYSTORE*
+*keystore*.txt
+*.idsig
+.env
+.env.*

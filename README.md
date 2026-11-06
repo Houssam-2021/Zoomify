@@ -13,45 +13,51 @@ Requires Android 11 or newer.
 
 **Every push** builds, signs, verifies and tests. Nothing public changes.
 
-1. **Build** an unsigned release APK.
-2. **Sign** with the new private key from secrets, plus a v3 rotation proof from the legacy key.
+1. **Build** an unsigned release APK, plus a test-only "future update" build (`versionCode + 1`, never published).
+2. **Sign** with the new private key from secrets plus the v3 rotation proof copied from v1.1
+   (`android/signing/zoomify-v1.1.lineage`). **No old private key is involved.**
 3. **Mandatory verification.** Any failure stops the run:
-   - v3 signature present, with one signer: the new key `72:96:CD:BF…CC:CF`.
+   - v3 signature present, with one signer: the new key `72:96:CD:BF…CC:CF`. The v2 signature is the new key too, so
+     there is no signature by the compromised key anywhere in the APK.
    - The lineage is exactly *legacy → new*, and the legacy key has **rollback revoked**.
    - `versionCode` / `versionName` match the build, and the APK is not debuggable.
    - **Permission allow-list:** `CAMERA`, `RECORD_AUDIO`, `VIBRATE`. No `INTERNET`, and no app-defined permissions,
      because those break rotation updates on Android 11/12.
-4. **Key-rotation tests on Android 11, 12 and 13 emulators:**
-   - v1.0 → v1.1 in-place update succeeds.
-   - An APK signed only with the leaked key is **rejected**.
+4. **Key-rotation tests on Android 11, 12 and 13 emulators** (`.github/scripts/rotation-test.sh`):
+   - v1.0 → published v1.1 → this build → future build: all in-place updates, with app data kept at each step.
+   - An APK signed only with the compromised key (versionCode 999999) is **rejected** with
+     `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, and the same file installs on an empty device (control).
+   - v1.0 → this build directly also works, and the attacker APK is rejected afterwards.
    - A clean install works, and a launch smoke test passes.
+   - The v1.0 and attacker APKs come from a **draft** release (*PRIVATE test fixtures*), which only collaborators
+     can see. Their SHA-256 checksums are pinned in the workflow. The test APK artifact is deleted after each run.
 
 **Publishing** is manual: *Actions → Android APK → Run workflow → tick **publish***. It runs only after all of the
 above pass, then:
 
 - Creates the versioned release `v<versionName>` with security notes and the APK's SHA-256, and marks it Latest.
-  It **never deletes** releases. The old `android-latest` (1.0) release is kept with its download statistics and
-  relabelled "superseded".
+- Points the old `android-latest/Zoomify.apk` link at it (below).
 - Checks that the published APK is byte-identical to the verified build.
-- Deploys the website to Cloudflare Pages: first a **preview**, then automated page, link and redirect checks,
-  then **production**, then the checks again. `/download` redirects to the verified release's APK, so APK files
-  never sit on Cloudflare.
+
+For a new release, bump `zoomifyVersionCode` and `versionName` in `android/app/build.gradle.kts`.
 
 ### Signing keys
 
-- `android/app/zoomify-sideload.keystore` is the **compromised legacy key**. It's used only as the old signer in the
-  rotation proof, and for local debug builds.
-- The new release key exists only in repository secrets `ZOOMIFY_KEYSTORE_B64` / `ZOOMIFY_KEYSTORE_PASSWORD`.
-  **Back it up.** Losing it means existing users can never be updated again.
+- **Compromised key** (`1a9f7202…c12c`, "Zoomify Sideload"): it was committed publicly on 2026-11-02, together with its
+  password, and was removed from the source tree on 2026-11-06. It must be treated as **permanently compromised**:
+  copies exist in the git history and anywhere the repo was cloned. Nothing builds or signs with it any more.
+- **Release key** (`72:96:CD:BF…CC:CF`): only in repository secrets `ZOOMIFY_KEYSTORE_B64` /
+  `ZOOMIFY_KEYSTORE_PASSWORD` and the owner's offline backup. **Back it up.** Losing it means existing users can never
+  be updated again.
+- `.gitignore` blocks keystores and credential files (`*.jks`, `*.keystore`, `*.p12`, `.env`, and similar).
 
 ### Old download link
 
-`releases/download/android-latest/Zoomify.apk` was shared widely while it served 1.0, which was signed with the
-leaked key. GitHub can't redirect release-asset URLs, but it serves them by file name, and renaming an asset keeps
-its download count. So that release now holds the verified v1.1 as `Zoomify.apk`, and the original 1.0 file is
-kept as `Zoomify-1.0-old-key-superseded.apk` with its download history. Every new publish repeats this
-(`.github/scripts/refresh-legacy-link.sh`). To run it on its own: *Actions → Point the old android-latest link at a
-verified release*.
+`releases/download/android-latest/Zoomify.apk` was shared widely while it served 1.0. GitHub can't redirect
+release-asset URLs, but it serves them by file name, so that release now holds the verified newest release as
+`Zoomify.apk`. Every publish repeats this (`.github/scripts/refresh-legacy-link.sh`). The original 1.0 file was
+removed from public downloads on 2026-11-06. To run the refresh on its own: *Actions → Point the old android-latest
+link at a verified release*.
 
 ### Website on Cloudflare Pages (`site.yml`)
 

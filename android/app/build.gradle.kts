@@ -21,26 +21,13 @@ android {
         versionName = "1.1"
     }
 
-    // LEGACY KEY - COMPROMISED. This key was committed publicly, so it is only used for local debug builds and as
-    // the "old signer" in CI's key rotation (.github/workflows/android.yml). Public release APKs are built unsigned
-    // here and signed in CI with the private key from the ZOOMIFY_KEYSTORE_* secrets plus a rotation proof.
-    signingConfigs {
-        create("sideload") {
-            storeFile = file("zoomify-sideload.keystore")
-            storePassword = "REDACTED"
-            keyAlias = "zoomify"
-            keyPassword = "REDACTED"
-        }
-    }
-
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Unsigned on purpose: see the signing step in CI.
+            // Unsigned on purpose: CI signs releases with the private key from repository secrets
+            // (.github/workflows/android.yml). No signing key or password is stored in this repository.
         }
-        debug {
-            signingConfig = signingConfigs.getByName("sideload")
-        }
+        // Debug builds use Android's standard local debug key (~/.android/debug.keystore), never committed.
     }
 
     compileOptions {

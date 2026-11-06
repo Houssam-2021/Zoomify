@@ -28,7 +28,13 @@ concurrency:
 
 env:
   NEW_CERT_SHA256: 7296cdbf1dd613c75317e45a288fab9bc043d82de5339d44fbec70bf91a7cccf
-  LEGACY_CERT_SHA256: 1a9f720214ac233d6f5be7e1ae5994911fbdab50d52ae43659521c0dab8dc12c
+  LEGACY_CERT_SHA256: 1a9f720214ac233d6f5be7e1ae5994911fbdab50d52ae43659521c0dab8dc12c   # certificate only (public)
+  LINEAGE_SHA256: f11b259a6569c3bc79ebe78d3ae96ccf8e46a6d33cad9485ac522a1b0e090235
+  V11_SHA256: ebca94a408dad408bb4556f8ccf6addb83c7247e3a4ad685086798907194597a
+  FIXTURE_RELEASE: PRIVATE test fixtures (draft, never publish)
+  FIXTURES_SHA256: |
+    e8474c624adb1d686363d1880077776affe91fe201bbd1b8016e1372aa5c3dda  test-apks/zoomify-1.0-legacy.apk
+    eca12d2994f85fc1134be27d57a182eca873def7eb24b04e6966e2edd3a4ffff  test-apks/TEST-ONLY-legacy-attacker.apk
 
 jobs:
   build:
@@ -55,22 +61,28 @@ jobs:
         id: meta
         run: |
           echo "version=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)" >> "$GITHUB_OUTPUT"
-          echo "version_code=$(grep -oP 'versionCode = \K[0-9]+' app/build.gradle.kts)" >> "$GITHUB_OUTPUT"
+          echo "version_code=$(grep -oP 'val zoomifyVersionCode = \K[0-9]+' app/build.gradle.kts)" >> "$GITHUB_OUTPUT"
 
-      - name: Build unsigned release APK
-        run: ./gradlew --no-daemon --stacktrace assembleRelease
+      - name: Build unsigned release APK (and a test-only "future update" with versionCode + 1)
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon --stacktrace assembleRelease
+          cp app/build/outputs/apk/release/app-release-unsigned.apk "$RUNNER_TEMP/release-unsigned.apk"
+          ./gradlew --no-daemon assembleRelease -PzoomifyTestVersionCode=$(( ${{ steps.meta.outputs.version_code }} + 1 ))
+          cp app/build/outputs/apk/release/app-release-unsigned.apk "$RUNNER_TEMP/future-unsigned.apk"
 
-      # Public releases are never signed with the leaked legacy key alone. Without the new key, stop here.
+      # Public releases are never signed with the compromised legacy key. Without the new key, stop here.
       - name: Require the new signing key
         if: env.HAS_SIGNING_KEY != 'true'
         run: |
           echo "::error::Add the ZOOMIFY_KEYSTORE_B64 and ZOOMIFY_KEYSTORE_PASSWORD repository secrets. Nothing was published."
           exit 1
 
-      # Key rotation (APK Signature Scheme v3): the APK carries a proof, signed by the old (leaked) key, that the
-      # new key replaces it. The old key keeps "installed data" (so existing installs can update) but loses
-      # "rollback", so once a phone has this version, an APK signed only with the leaked key can't replace it.
-      - name: Sign with the new key and rotation proof
+      # Key rotation (APK Signature Scheme v3). The rotation proof ("lineage") was signed once by the old key when v1.1
+      # was made; it is public data and is reused unchanged from v1.1 (android/signing/zoomify-v1.1.lineage), so the
+      # compromised key is no longer needed (or present). In it the old key keeps "installed data" (1.0 installs can
+      # update) but has no "rollback", so once a phone has 1.1 or newer, an APK signed only with the old key is rejected.
+      - name: Sign with the new key and the v1.1 rotation proof
         env:
           ZOOMIFY_KEYSTORE_B64: ${{ secrets.ZOOMIFY_KEYSTORE_B64 }}
           ZOOMIFY_KEYSTORE_PASSWORD: ${{ secrets.ZOOMIFY_KEYSTORE_PASSWORD }}
@@ -78,49 +90,47 @@ jobs:
           set -euo pipefail
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
           echo "BT=$BT" >> "$GITHUB_ENV"
+          echo "$LINEAGE_SHA256  signing/zoomify-v1.1.lineage" | sha256sum -c
           umask 077
           KEYDIR="$RUNNER_TEMP/keys"
-          mkdir -p "$KEYDIR"
+          mkdir -p "$KEYDIR" test-apks
           echo "$ZOOMIFY_KEYSTORE_B64" | base64 -d > "$KEYDIR/new.p12"
-          LEGACY=app/zoomify-sideload.keystore
-
-          "$BT/apksigner" rotate --out "$KEYDIR/lineage.bin" \
-            --old-signer --ks "$LEGACY" --ks-pass pass:REDACTED --ks-key-alias zoomify --key-pass pass:REDACTED \
-              --set-rollback false --set-permission false --set-shared-uid false --set-auth false \
-            --new-signer --ks "$KEYDIR/new.p12" --ks-type PKCS12 --ks-pass env:ZOOMIFY_KEYSTORE_PASSWORD \
-              --ks-key-alias zoomify
-
-          "$BT/zipalign" -p -f 4 app/build/outputs/apk/release/app-release-unsigned.apk "$KEYDIR/aligned.apk"
-
-          "$BT/apksigner" sign \
-            --ks "$LEGACY" --ks-pass pass:REDACTED --ks-key-alias zoomify --key-pass pass:REDACTED \
-            --next-signer --ks "$KEYDIR/new.p12" --ks-type PKCS12 --ks-pass env:ZOOMIFY_KEYSTORE_PASSWORD \
-              --ks-key-alias zoomify \
-            --lineage "$KEYDIR/lineage.bin" --rotation-min-sdk-version 28 \
-            --out Zoomify.apk "$KEYDIR/aligned.apk"
-
-          # Test-only APK signed with the leaked key alone: used to prove phones reject it. Never published.
-          mkdir -p test-apks
-          "$BT/apksigner" sign --ks "$LEGACY" --ks-pass pass:REDACTED --ks-key-alias zoomify --key-pass pass:REDACTED \
-            --out test-apks/TEST-ONLY-legacy-signed.apk "$KEYDIR/aligned.apk"
+          sign() {
+            "$BT/zipalign" -p -f 4 "$1" "$KEYDIR/aligned.apk"
+            "$BT/apksigner" sign --ks "$KEYDIR/new.p12" --ks-type PKCS12 --ks-pass env:ZOOMIFY_KEYSTORE_PASSWORD \
+              --ks-key-alias zoomify --lineage signing/zoomify-v1.1.lineage --rotation-min-sdk-version 28 \
+              --out "$2" "$KEYDIR/aligned.apk"
+          }
+          sign "$RUNNER_TEMP/release-unsigned.apk" Zoomify.apk
+          # Test-only: proves a future version signed the same way updates in place. Never published.
+          sign "$RUNNER_TEMP/future-unsigned.apk" test-apks/TEST-ONLY-future-update.apk
           rm -rf "$KEYDIR"
+          cp Zoomify.apk test-apks/Zoomify.apk
 
       # Mandatory: any failure here stops the build, so nothing unverified can be published.
       - name: Verify signature, rotation proof and version
         run: |
           set -euo pipefail
           mkdir -p signing-report
-          "$BT/apksigner" verify -v --print-certs Zoomify.apk | tee signing-report/verify.txt
-          "$BT/apksigner" lineage --in Zoomify.apk --print-certs | tee signing-report/lineage.txt
-          grep -q "Verified using v3 scheme (APK Signature Scheme v3): true" signing-report/verify.txt
-          grep -q "Number of signers: 1" signing-report/verify.txt
-          grep -q "certificate SHA-256 digest: $NEW_CERT_SHA256" signing-report/verify.txt \
-            || { echo "::error::Not signed with the new release key"; exit 1; }
-          # Lineage must be exactly: legacy (rollback revoked) -> new key.
-          python3 - <<'PY'
+          check_signing() {   # <apk> <report-prefix>
+            "$BT/apksigner" verify -v --print-certs "$1" > "signing-report/$2-verify.txt"
+            "$BT/apksigner" lineage --in "$1" --print-certs > "signing-report/$2-lineage.txt"
+            cat "signing-report/$2-verify.txt" "signing-report/$2-lineage.txt"
+            grep -q "Verified using v3 scheme (APK Signature Scheme v3): true" "signing-report/$2-verify.txt"
+            grep -q "Number of signers: 1" "signing-report/$2-verify.txt"
+            grep -q "certificate SHA-256 digest: $NEW_CERT_SHA256" "signing-report/$2-verify.txt" \
+              || { echo "::error::$1 is not signed with the new release key"; exit 1; }
+            # The v2 signature (what pre-rotation platforms check) must also be the new key: no signature by the
+            # compromised key anywhere in the APK.
+            "$BT/apksigner" verify --print-certs --min-sdk-version 24 --max-sdk-version 27 "$1" > "signing-report/$2-v2.txt"
+            grep -q "certificate SHA-256 digest: $NEW_CERT_SHA256" "signing-report/$2-v2.txt" \
+              && ! grep -q "$LEGACY_CERT_SHA256" "signing-report/$2-v2.txt" \
+              || { echo "::error::$1 has a v2 signature that isn't the new key"; cat "signing-report/$2-v2.txt"; exit 1; }
+            # Lineage must be exactly: legacy (rollback revoked) -> new key.
+            LINEAGE_TXT="signing-report/$2-lineage.txt" python3 - <<'PY'
           import os, re
           signers, current = {}, None
-          for line in open("signing-report/lineage.txt"):
+          for line in open(os.environ["LINEAGE_TXT"]):
               m = re.match(r"Signer #(\d+) in lineage certificate SHA-256 digest: ([0-9a-f]+)", line)
               if m:
                   current = int(m.group(1)); signers[current] = {"digest": m.group(2)}
@@ -136,6 +146,11 @@ jobs:
           assert old["rollback"] == "false", "legacy key must not have rollback"
           print("Lineage OK: legacy -> new, legacy rollback revoked:", signers)
           PY
+          }
+          check_signing Zoomify.apk release
+          check_signing test-apks/TEST-ONLY-future-update.apk future
+          "$BT/aapt2" dump badging test-apks/TEST-ONLY-future-update.apk > signing-report/future-badging.txt
+          grep -q "versionCode='$(( ${{ steps.meta.outputs.version_code }} + 1 ))'" signing-report/future-badging.txt
           "$BT/aapt2" dump badging Zoomify.apk | tee signing-report/badging.txt
           grep -q "versionCode='${{ steps.meta.outputs.version_code }}'" signing-report/badging.txt
           grep -q "versionName='${{ steps.meta.outputs.version }}'" signing-report/badging.txt
@@ -150,22 +165,6 @@ jobs:
           grep -q "E: permission " signing-report/AndroidManifest.txt && { echo "::error::APK defines a custom permission"; exit 1; } || true
           sha256sum Zoomify.apk | tee signing-report/Zoomify.apk.sha256
 
-      - name: Get v1.0 (legacy-signed) for the rotation test
-        run: |
-          set -euo pipefail
-          # android-latest/Zoomify.apk now serves the newest release; the original v1.0 is kept beside it.
-          curl -sSfL -o test-apks/zoomify-1.0-legacy.apk \
-            https://github.com/Houssam-2021/Zoomify/releases/download/android-latest/Zoomify-1.0-old-key-superseded.apk
-          CERTS=$("$BT/apksigner" verify --print-certs test-apks/zoomify-1.0-legacy.apk)
-          grep -q "SHA-256 digest: $LEGACY_CERT_SHA256" <<<"$CERTS" \
-            || { echo "::error::v1.0 test APK is not signed with the legacy key"; echo "$CERTS"; exit 1; }
-          [ "$(grep -c 'certificate SHA-256 digest' <<<"$CERTS")" -eq 1 ] \
-            || { echo "::error::v1.0 test APK must have exactly one (legacy) signer"; exit 1; }
-          BADGING=$("$BT/aapt2" dump badging test-apks/zoomify-1.0-legacy.apk)
-          grep -q "versionCode='1'" <<<"$BADGING" \
-            || { echo "::error::v1.0 test APK is not versionCode 1"; exit 1; }
-          cp Zoomify.apk test-apks/Zoomify.apk
-
       - name: Upload signed APK and report
         uses: actions/upload-artifact@v4
         with:
@@ -177,14 +176,18 @@ jobs:
       - name: Upload rotation-test APKs (test only)
         uses: actions/upload-artifact@v4
         with:
-          name: rotation-test-apks
+          name: rotation-test-apks   # new-key builds only; deleted again when the tests finish
           path: android/test-apks/
-          retention-days: 2
+          retention-days: 1
 
   rotation-test:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: write   # only to read the private (draft) fixture release; nothing is written
+    env:
+      CUR_VC: ${{ needs.build.outputs.version_code }}
     strategy:
       fail-fast: false
       matrix:
@@ -195,6 +198,21 @@ jobs:
         with:
           name: rotation-test-apks
           path: test-apks
+      - name: Get the private fixtures and the published v1.1 (checksums pinned)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "FUT_VC=$(( CUR_VC + 1 ))" >> "$GITHUB_ENV"
+          REL=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq "[.[]|select(.draft and .name==\"$FIXTURE_RELEASE\")][0].id")
+          [ -n "$REL" ] && [ "$REL" != null ] || { echo "::error::Private fixture draft not found"; exit 1; }
+          for f in zoomify-1.0-legacy.apk TEST-ONLY-legacy-attacker.apk; do
+            id=$(gh api "repos/$GITHUB_REPOSITORY/releases/$REL/assets" --jq ".[]|select(.name==\"$f\")|.id")
+            gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$id" > "test-apks/$f"
+          done
+          curl -sSfL -o test-apks/Zoomify-v1.1.apk https://github.com/Houssam-2021/Zoomify/releases/download/v1.1/Zoomify.apk
+          printf '%s\n' "$FIXTURES_SHA256" "$V11_SHA256  test-apks/Zoomify-v1.1.apk" | sed '/^$/d' | sha256sum -c
+          ls -l test-apks
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -230,6 +248,21 @@ jobs:
         with:
           name: rotation-report-api${{ matrix.api-level }}
           path: rotation-report-api*.txt
+
+  # Test APKs are only needed by the emulator jobs; delete them so they don't linger as downloadable artifacts.
+  delete-test-apks:
+    needs: rotation-test
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for id in $(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --jq '.artifacts[]|select(.name=="rotation-test-apks")|.id'); do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id" && echo "deleted test artifact $id"
+          done
 
   publish:
     needs: [build, rotation-test]
