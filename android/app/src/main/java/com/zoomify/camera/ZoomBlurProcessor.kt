@@ -95,11 +95,21 @@ class ZoomBlurProcessor : SurfaceProcessor {
     @Volatile var horizonSource: ((Long) -> Float)? = null
     @Volatile var horizonCrop = 1f
     @Volatile var frontCamera = false
+    /** Experimental 3-axis gyro stabiliser (opt-in). When it returns a warp, it also levels the horizon. */
+    @Volatile var stabilizer: GyroStabilizer? = null
+    /** Gentle sharpening while horizon lock's crop enlarges the picture (0 = off). */
+    @Volatile var cropSharpen = 0f
+    /** Size of the camera stream feeding the GPU (for diagnostics and the stabiliser). */
+    @Volatile var inputWidth = 0
+        private set
+    @Volatile var inputHeight = 0
+        private set
     /** Number of frames drawn to the preview, for the FPS readout. */
     @Volatile var previewFrames = 0L
         private set
 
     // GL-thread state.
+    private val stabMatrix = FloatArray(16)
     private var blur = 0f
     private var frameCount = 0
     private var released = false
@@ -179,6 +189,8 @@ class ZoomBlurProcessor : SurfaceProcessor {
         val texture = createExternalTexture()
         val surfaceTexture = SurfaceTexture(texture)
         surfaceTexture.setDefaultBufferSize(request.resolution.width, request.resolution.height)
+        inputWidth = request.resolution.width
+        inputHeight = request.resolution.height
         val surface = Surface(surfaceTexture)
         surfaceTexture.setOnFrameAvailableListener({ drawFrame(it) }, handler)
         inputSurfaceTexture = surfaceTexture
@@ -248,6 +260,7 @@ class ZoomBlurProcessor : SurfaceProcessor {
         val digital = digitalZoom
         val horizon = horizonSource?.invoke(timestamp) ?: 0f
         val texDet = det2(textureMatrix)
+        val warp = stabilizerWarp(timestamp, digital)
 
         for ((output, target) in outputs) {
             output.updateTransformMatrix(outputMatrix, textureMatrix)
@@ -256,12 +269,12 @@ class ZoomBlurProcessor : SurfaceProcessor {
             val mirrored = det2(outputMatrix) * texDet < 0f
             val angle = horizon * HorizonMath.outputSign(frontCamera, mirrored)
             if (target.isPreview) {
-                drawPreview(target, digital, previewGrade, pulse * 0.75f, seed, angle)
+                drawPreview(target, digital, previewGrade, pulse * 0.75f, seed, angle, warp)
                 previewFrames++
             } else {
                 val grade = videoGrade
                 GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
-                drawCamera(target.width, target.height, digital, blur * grade.blurScale, grade, 0f, seed, dummyTexture, angle)
+                drawCamera(target.width, target.height, digital, blur * grade.blurScale, grade, 0f, seed, dummyTexture, angle, warp)
                 EGLExt.eglPresentationTimeANDROID(display, target.surface, timestamp)
                 EGL14.eglSwapBuffers(display, target.surface)
             }
@@ -271,7 +284,30 @@ class ZoomBlurProcessor : SurfaceProcessor {
     /** Determinant of the 2D (upper-left) part of a column-major 4x4 matrix. */
     private fun det2(m: FloatArray): Float = m[0] * m[5] - m[4] * m[1]
 
-    private fun drawPreview(target: Target, digital: Float, grade: OutputGrade, mix: Float, seed: Float, angle: Float) {
+    /**
+     * The experimental gyro stabiliser's warp for this frame (null when it's off): computed once per frame from the
+     * edge points of the video output (or the preview), so both outputs get the same, edge-safe correction.
+     */
+    private fun stabilizerWarp(timestamp: Long, digital: Float): FloatArray? {
+        val stab = stabilizer ?: return null
+        if (!stab.running || !(videoGrade.horizon || previewGrade.horizon)) return null
+        val entry = outputs.entries.firstOrNull { !it.value.isPreview } ?: outputs.entries.firstOrNull() ?: return null
+        entry.key.updateTransformMatrix(stabMatrix, textureMatrix)
+        val scale = 1f / (horizonCrop * maxOf(1f, digital))
+        val corners = FloatArray(16)
+        var i = 0
+        for ((u, v) in EDGE_POINTS) {
+            val px = 0.5f + (u - 0.5f) * scale
+            val py = 0.5f + (v - 0.5f) * scale
+            corners[i++] = stabMatrix[0] * px + stabMatrix[4] * py + stabMatrix[12]
+            corners[i++] = stabMatrix[1] * px + stabMatrix[5] * py + stabMatrix[13]
+        }
+        return stab.frameWarp(timestamp, inputWidth, inputHeight, corners)
+    }
+
+    private fun drawPreview(
+        target: Target, digital: Float, grade: OutputGrade, mix: Float, seed: Float, angle: Float, warp: FloatArray?,
+    ) {
         ensureHistory(target)
         val current = target.index
         val previous = 1 - current
@@ -279,7 +315,7 @@ class ZoomBlurProcessor : SurfaceProcessor {
         // Pass 1: camera (+ blur, grade, lens-switch cross-fade) into this frame's history texture.
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, target.framebuffers[current])
         drawCamera(target.width, target.height, digital, blur * grade.blurScale, grade,
-            if (target.historyReady) mix else 0f, seed, target.textures[previous], angle)
+            if (target.historyReady) mix else 0f, seed, target.textures[previous], angle, warp)
 
         // Pass 2: copy to the screen.
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
@@ -297,7 +333,7 @@ class ZoomBlurProcessor : SurfaceProcessor {
 
     private fun drawCamera(
         width: Int, height: Int, digital: Float, blur: Float, grade: OutputGrade,
-        historyMix: Float, seed: Float, historyTexture: Int, angle: Float,
+        historyMix: Float, seed: Float, historyTexture: Int, angle: Float, warp: FloatArray?,
     ) {
         val p = mainProgram
         GLES20.glViewport(0, 0, width, height)
@@ -324,7 +360,16 @@ class ZoomBlurProcessor : SurfaceProcessor {
         GLES20.glUniform1f(uniform(p, "uShaped"), if (grade.look && currentLook.shaped) 1f else 0f)
         GLES20.glUniform1f(uniform(p, "uLutOn"), if (lutOn) 1f else 0f)
         GLES20.glUniform1f(uniform(p, "uLutSize"), maxOf(2, lutSize).toFloat())
-        GLES20.glUniform1f(uniform(p, "uAngle"), if (grade.horizon) angle else 0f)
+        val stabOn = grade.horizon && warp != null
+        // With the gyro stabiliser, levelling is part of its warp; otherwise horizon lock rotates the output.
+        GLES20.glUniform1f(uniform(p, "uAngle"), if (grade.horizon && !stabOn) angle else 0f)
+        GLES20.glUniform1f(uniform(p, "uStabOn"), if (stabOn) 1f else 0f)
+        if (stabOn) {
+            GLES20.glUniformMatrix3fv(uniform(p, "uStabTop"), 1, false, warp!!, 0)
+            GLES20.glUniformMatrix3fv(uniform(p, "uStabBottom"), 1, false, warp, 9)
+        }
+        GLES20.glUniform1f(uniform(p, "uSharpen"), if (grade.horizon && blur <= 0f) cropSharpen else 0f)
+        GLES20.glUniform2f(uniform(p, "uPixel"), 1.5f / width, 1.5f / height)
         GLES20.glUniform1f(uniform(p, "uCrop"), if (grade.horizon) horizonCrop else 1f)
         GLES20.glUniform1f(uniform(p, "uAspect"), width.toFloat() / height.toFloat())
         drawQuad(p)
@@ -449,6 +494,9 @@ class ZoomBlurProcessor : SurfaceProcessor {
     // endregion
 
     private companion object {
+        /** Output corners and edge midpoints, checked so the stabiliser never shows a frame edge. */
+        val EDGE_POINTS = listOf(0f to 0f, 0.5f to 0f, 1f to 0f, 1f to 0.5f, 1f to 1f, 0.5f to 1f, 0f to 1f, 0f to 0.5f)
+
         const val VERTEX_SHADER = """
 attribute vec4 aPosition;
 varying vec2 vUv;
@@ -479,6 +527,11 @@ uniform float uLutSize;
 uniform float uAngle;
 uniform float uCrop;
 uniform float uAspect;
+uniform float uStabOn;
+uniform mat3 uStabTop;
+uniform mat3 uStabBottom;
+uniform float uSharpen;
+uniform vec2 uPixel;
 
 const float LOG_C = 0.03;
 const float LOG_L0 = -5.058894;
@@ -495,6 +548,13 @@ vec3 cameraAt(vec2 uv) {
     d = vec2(c * d.x - s * d.y, s * d.x + c * d.y);
     vec2 p = vec2(0.5) + d / vec2(uAspect, 1.0) / (uCrop * uDigitalZoom);
     vec2 tex = (uTexMatrix * vec4(p, 0.0, 1.0)).xy;
+    if (uStabOn > 0.5) {
+        // Gyro stabiliser: virtual (steady, level) camera -> real camera, per sensor row (rolling shutter).
+        vec3 m = (uStabTop + uStabBottom) * 0.5 * vec3(tex, 1.0);
+        float row = clamp(m.y / m.z, 0.0, 1.0);
+        vec3 h = (uStabTop * (1.0 - row) + uStabBottom * row) * vec3(tex, 1.0);
+        tex = h.xy / h.z;
+    }
     return toLinear(texture2D(uCamera, tex).rgb);
 }
 
@@ -523,6 +583,12 @@ void main() {
     vec3 color;
     if (uBlur <= 0.0) {
         color = cameraAt(vUv);
+        if (uSharpen > 0.0) {
+            // Horizon lock enlarges the picture ~2x: a gentle unsharp mask restores some of the lost crispness.
+            vec3 around = cameraAt(vUv + vec2(uPixel.x, 0.0)) + cameraAt(vUv - vec2(uPixel.x, 0.0))
+                + cameraAt(vUv + vec2(0.0, uPixel.y)) + cameraAt(vUv - vec2(0.0, uPixel.y));
+            color = max(color + (color - around * 0.25) * uSharpen, vec3(0.0));
+        }
     } else {
         // Velora's symmetric radial blur (taps from -0.5 to +0.5 along the ray, centre-weighted),
         // in linear light and jittered per pixel so it streaks smoothly instead of ghosting.

@@ -48,6 +48,14 @@ class HorizonLock(context: Context, private val onCrop: (crop: Float) -> Unit) :
     /** True if the camera's frame timestamps use the same clock as sensor events (elapsedRealtime). */
     @Volatile var cameraClockIsRealtime = true
 
+    /**
+     * True while the camera's own EIS is stabilising the frames. EIS already removes small, fast shakes (including
+     * some roll), so horizon lock then follows only the slower, larger rotation instead of re-adding that jitter.
+     */
+    @Volatile var cooperativeWithEis = false
+    private var nominalNow = 0.0
+    private var lastEventNs = 0L
+
     val available: Boolean get() = sensor != null
 
     fun start() {
@@ -55,6 +63,8 @@ class HorizonLock(context: Context, private val onCrop: (crop: Float) -> Unit) :
         running = true
         filter.reset()
         history.clear()
+        nominalNow = HorizonMath.nominal(targetRotation)
+        lastEventNs = 0L
         onCrop(HorizonMath.fullLockCrop(16.0 / 9.0).toFloat())
         val t = HandlerThread("ZoomifyHorizon").also { it.start() }
         thread = t
@@ -89,7 +99,14 @@ class HorizonLock(context: Context, private val onCrop: (crop: Float) -> Unit) :
         // Pointing straight up/down (or lying flat): roll is undefined, so hold the last value.
         if (hypot(gx, gy) < 0.3 * sqrt(gx * gx + gy * gy + gz * gz)) return
         val roll = HorizonMath.roll(gx, gy)
-        val relative = HorizonMath.wrap(roll - HorizonMath.nominal(targetRotation))
+        // A deliberate portrait <-> landscape change turns the reference smoothly (~0.35 s for 90°), never a jump.
+        val dt = if (lastEventNs == 0L) 0.0 else ((event.timestamp - lastEventNs) / 1e9).coerceIn(0.0, 0.1)
+        lastEventNs = event.timestamp
+        nominalNow = HorizonMath.slew(nominalNow, HorizonMath.nominal(targetRotation), NOMINAL_SLEW_RAD_S * dt)
+        val relative = HorizonMath.wrap(roll - nominalNow)
+        if (gravity != null) {
+            if (cooperativeWithEis) filter.tune(EIS_MIN_CUTOFF, EIS_BETA) else filter.tune(GRAVITY_MIN_CUTOFF, GRAVITY_BETA)
+        }
         val smoothed = filter.filter(relative, event.timestamp)
         // The phone rolled clockwise, so the scene appears rotated counter-clockwise: undo it.
         history.add(event.timestamp, -smoothed)
@@ -101,6 +118,10 @@ class HorizonLock(context: Context, private val onCrop: (crop: Float) -> Unit) :
         /** One Euro tuning for the (gyro-fused) gravity sensor: ~5 Hz when still, faster the quicker you turn. */
         const val GRAVITY_MIN_CUTOFF = 5.0
         const val GRAVITY_BETA = 2.0
+        /** With hardware EIS active: ignore small fast roll jitter (EIS has it), still follow real rotation. */
+        const val EIS_MIN_CUTOFF = 0.8
+        const val EIS_BETA = 4.0
+        const val NOMINAL_SLEW_RAD_S = 4.5
     }
 }
 
@@ -115,6 +136,9 @@ object HorizonMath {
         Surface.ROTATION_270 -> PI / 2
         else -> 0.0
     }
+
+    /** Moves [from] towards [to] by at most [maxStep] along the shorter way round. */
+    fun slew(from: Double, to: Double, maxStep: Double): Double = wrap(from + wrap(to - from).coerceIn(-maxStep, maxStep))
 
     fun wrap(a: Double): Double {
         var x = a % (2 * PI)
@@ -149,7 +173,9 @@ object HorizonMath {
  * One Euro filter (Casiez et al.) on an angle, unwrapped so passing ±180° doesn't make it spin the long way round.
  * Low cutoff when still (removes sensor noise), higher cutoff as the angle changes faster (no lag when turning).
  */
-class OneEuroAngle(private val minCutoffHz: Double, private val beta: Double, private val dCutoffHz: Double = 1.0) {
+class OneEuroAngle(private var minCutoffHz: Double, private var beta: Double, private val dCutoffHz: Double = 1.0) {
+    fun tune(minCutoffHz: Double, beta: Double) { this.minCutoffHz = minCutoffHz; this.beta = beta }
+
     private var x = 0.0
     private var dx = 0.0
     private var lastNs = 0L

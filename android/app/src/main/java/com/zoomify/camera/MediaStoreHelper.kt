@@ -112,6 +112,42 @@ object MediaStoreHelper {
         }
     }
 
+    /**
+     * The real frame rate of a saved video: video samples counted from the file itself, over the video track's
+     * duration (not the container's nominal rate). Returns (fps, frames), or null if the file can't be read.
+     */
+    fun recordedFrameRate(context: Context, uri: Uri): Pair<Double, Int>? = try {
+        val extractor = android.media.MediaExtractor()
+        try {
+            extractor.setDataSource(context, uri, null)
+            val track = (0 until extractor.trackCount).firstOrNull {
+                extractor.getTrackFormat(it).getString(android.media.MediaFormat.KEY_MIME)?.startsWith("video/") == true
+            } ?: return null
+            extractor.selectTrack(track)
+            var frames = 0
+            var first = -1L
+            var last = -1L
+            var previous = Long.MIN_VALUE
+            var repeated = 0
+            while (true) {
+                val t = extractor.sampleTime
+                if (t < 0) break
+                if (first < 0 || t < first) first = t
+                if (t == previous) repeated++
+                previous = t
+                last = maxOf(last, t)
+                frames++
+                if (!extractor.advance()) break
+            }
+            if (frames < 2 || last <= first) null
+            else Pair((frames - 1 - repeated) * 1_000_000.0 / (last - first), frames)
+        } finally {
+            extractor.release()
+        }
+    } catch (e: Exception) {
+        null
+    }
+
     fun loadThumbnail(context: Context, uri: Uri, size: Int = 240): Bitmap? = try {
         context.contentResolver.loadThumbnail(uri, Size(size, size), null)
     } catch (e: Exception) {

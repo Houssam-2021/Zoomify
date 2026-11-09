@@ -131,3 +131,37 @@ class AngleHistoryTest {
         assertEquals(PI, abs(h.at(1_500)), 1e-9)
     }
 }
+
+class HorizonLockEisTuningTest {
+    private val deg = PI / 180
+    private val dtNs = 2_500_000L
+
+    private fun tremorFollowed(minCutoff: Double, beta: Double): Double {
+        val f = OneEuroAngle(minCutoff, beta)
+        var peak = 0.0
+        for (i in 0 until 4000) {
+            val truth = 0.25 * deg * sin(2 * PI * 9 * i * dtNs / 1e9)   // small 9 Hz hand tremor
+            val out = f.filter(truth, i * dtNs)
+            if (i > 800) peak = maxOf(peak, abs(out))
+        }
+        return peak / (0.25 * deg)
+    }
+
+    private fun rotationLag(minCutoff: Double, beta: Double, degPerSecond: Double): Double {
+        val f = OneEuroAngle(minCutoff, beta)
+        var lag = 0.0
+        for (i in 0 until 1600) {
+            val truth = HorizonMath.wrap(i * dtNs / 1e9 * degPerSecond * deg)
+            val out = f.filter(truth, i * dtNs)
+            if (i > 600) lag = maxOf(lag, abs(HorizonMath.wrap(out - truth)))
+        }
+        return lag / deg
+    }
+
+    @Test fun withEisIgnoresTremorButStillFollowsRotation() {
+        val tremor = tremorFollowed(HorizonLock.EIS_MIN_CUTOFF, HorizonLock.EIS_BETA)
+        assertTrue("follows ${tremor * 100}% of tremor", tremor < 0.2)
+        assertTrue(rotationLag(HorizonLock.EIS_MIN_CUTOFF, HorizonLock.EIS_BETA, 90.0) <
+            rotationLag(HorizonLock.GRAVITY_MIN_CUTOFF, HorizonLock.GRAVITY_BETA, 90.0) + 0.1)
+    }
+}

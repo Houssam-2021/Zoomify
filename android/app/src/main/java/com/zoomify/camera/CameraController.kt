@@ -82,6 +82,11 @@ enum class VideoProfile(val label: String) { STANDARD("Standard"), HDR("HDR 10-b
 enum class Stabilization(val label: String) { OFF("Off"), STANDARD("Standard"), HORIZON_LOCK("Horizon lock") }
 enum class LutTarget(val label: String) { PREVIEW("Preview only"), ALL("Preview + captures") }
 
+/** Hold time before horizon lock accepts a new portrait/landscape orientation. */
+private const val HORIZON_REORIENT_MS = 900L
+/** Unsharp-mask amount while horizon lock's ~2x crop enlarges the picture. */
+private const val CROP_SHARPEN = 0.35f
+
 /**
  * Owns CameraX and implements Velora Pro's behaviour natively. All public methods run on the main thread;
  * Compose observes the state properties directly.
@@ -158,6 +163,11 @@ class CameraController(private val activity: ComponentActivity) {
     var fps60Reason by mutableStateOf(""); private set
     /** The camera's real frame rate, measured from frame timestamps (0 until known). */
     var measuredFps by mutableIntStateOf(0); private set
+    /** Frame-rate diagnostics: what was requested, what the camera says it used, and what was measured/recorded. */
+    var fpsDiagnostics by mutableStateOf(""); private set
+    /** Experimental: gyro 3-axis stabiliser for horizon lock (turns the camera's own EIS/OIS off). */
+    var gyroStabilizer by mutableStateOf(false); private set
+    var gyroStabilizerAvailable by mutableStateOf(false); private set
 
     // endregion
 
@@ -171,6 +181,20 @@ class CameraController(private val activity: ComponentActivity) {
     private val fps60Failed = mutableSetOf<String>()
     private var fps60Key = ""
     private var bindGeneration = 0
+    private val gyroStab = GyroStabilizer(activity)
+    /** 60 fps combinations where the camera only reached 60 with its EIS off. */
+    private val eisOffFor60 = mutableSetOf<String>()
+    private var requestedAeText = "auto"
+    private var cameraxRangesText = ""
+    @Volatile private var resultAeRange: Range<Int>? = null
+    @Volatile private var resultFrameDurationNs = 0L
+    @Volatile private var resultExposureNs = 0L
+    @Volatile private var resultEis: Int? = null
+    @Volatile private var resultOis: Int? = null
+    private var lastRecordingFps = ""
+    private var horizonActive = false
+    private var pendingRotation = -1
+    private var pendingSince = 0L
 
     init {
         processor.horizonSource = horizonLock::angleAt
@@ -215,6 +239,16 @@ class CameraController(private val activity: ComponentActivity) {
             session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult,
         ) {
             result.get(CaptureResult.SENSOR_TIMESTAMP)?.let(fpsMeter::add)
+            resultAeRange = result.get(CaptureResult.CONTROL_AE_TARGET_FPS_RANGE)
+            result.get(CaptureResult.SENSOR_FRAME_DURATION)?.let { resultFrameDurationNs = it }
+            result.get(CaptureResult.SENSOR_EXPOSURE_TIME)?.let { resultExposureNs = it; gyroStab.exposureNs = it }
+            result.get(CaptureResult.SENSOR_ROLLING_SHUTTER_SKEW)?.let { gyroStab.rollingShutterSkewNs = it }
+            result.get(CaptureResult.CONTROL_ZOOM_RATIO)?.let { gyroStab.zoomRatio = it }
+            val eis = result.get(CaptureResult.CONTROL_VIDEO_STABILIZATION_MODE)
+            resultEis = eis
+            resultOis = result.get(CaptureResult.LENS_OPTICAL_STABILIZATION_MODE)
+            // Hardware EIS on (1 = ON, 2 = PREVIEW_STABILIZATION): let it handle small fast shakes.
+            horizonLock.cooperativeWithEis = eis == 1 || eis == 2
             val id = result.get(CaptureResult.LOGICAL_MULTI_CAMERA_ACTIVE_PHYSICAL_ID) ?: return
             val previous = lastPhysicalCameraId
             if (id != previous) {
@@ -241,8 +275,16 @@ class CameraController(private val activity: ComponentActivity) {
             }
             val off = abs(((orientation - center + 540) % 360) - 180)
             if (off > 30) return
+            // Horizon lock: only re-orient after the phone has been held in the new orientation for a moment, so
+            // rotating the phone (which horizon lock is meant to absorb) never flips the preview.
+            if (horizonActive) {
+                val now = SystemClock.elapsedRealtime()
+                if (rotation != pendingRotation) { pendingRotation = rotation; pendingSince = now; return }
+                if (now - pendingSince < HORIZON_REORIENT_MS || off > 20) return
+            }
             targetRotation = rotation
             horizonLock.targetRotation = rotation
+            gyroStab.targetRotation = rotation
             imageCapture?.targetRotation = rotation
             videoCapture?.targetRotation = rotation
         }
@@ -277,6 +319,7 @@ class CameraController(private val activity: ComponentActivity) {
     fun release() {
         orientationListener.disable()
         horizonLock.stop()
+        gyroStab.stop()
         zoomAnimator.stop()
         recording?.stop()
         provider?.unbindAll()
@@ -307,6 +350,7 @@ class CameraController(private val activity: ComponentActivity) {
             val lens = if (lensFacing == CameraSelector.LENS_FACING_FRONT) "FRONT" else "REAR"
             val measured = fpsMeter.fps().roundToInt()
             measuredFps = measured
+            fpsDiagnostics = buildFpsDiagnostics(measured, fps, size)
             val fpsLabel = if (measured > 0) measured else if (mode == CaptureMode.VIDEO) activeFps else 30
             cameraStatus = "$lens · $label $fpsLabel FPS"
             sourceInfo = if (size != null) "LIVE ${size.width} × ${size.height} · $fpsLabel FPS" else "LIVE SOURCE"
@@ -395,6 +439,10 @@ class CameraController(private val activity: ComponentActivity) {
         val camera2Fps60 = fpsCheck?.supported == true && !measuredBelow60
         val forceRange = if (isVideo && frameRate == 60 && camera2Fps60) fpsCheck?.aeRange else null
         processor.frontCamera = front
+        gyroStabilizerAvailable = gyroStab.available && !front
+        val gyroMode = horizon && gyroStabilizer && gyroStabilizerAvailable
+        val eisOff60 = isVideo && frameRate == 60 && fps60Key in eisOffFor60
+        if (gyroMode) configureGyroStabilizer(c2)
         horizonLock.cameraClockIsRealtime = c2.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE) ==
             CameraMetadata.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME
 
@@ -410,7 +458,7 @@ class CameraController(private val activity: ComponentActivity) {
                 )
                 .build()
         )
-        configureRepeating(Camera2Interop.Extender(previewBuilder), hardwareLog, curvePoints, forceRange)
+        configureRepeating(Camera2Interop.Extender(previewBuilder), hardwareLog, curvePoints, forceRange, gyroMode)
         val newPreview = previewBuilder.build()
         newPreview.setSurfaceProvider(previewView.surfaceProvider)
         preview = newPreview
@@ -486,10 +534,12 @@ class CameraController(private val activity: ComponentActivity) {
                 .setDynamicRange(range)
                 .setTargetRotation(targetRotation)
                 .setMirrorMode(if (mirrorFront) MirrorMode.MIRROR_MODE_ON_FRONT_ONLY else MirrorMode.MIRROR_MODE_OFF)
-            if (stabilization != Stabilization.OFF && stabilizationSupported) {
+            // The camera's EIS, except: with the gyro stabiliser (its warp must see raw frames, so EIS/OIS are off),
+            // and for 60 fps where this phone only reached 60 with EIS off.
+            if (stabilization != Stabilization.OFF && stabilizationSupported && !gyroMode && !eisOff60) {
                 videoBuilder.setVideoStabilizationEnabled(true)
             }
-            configureRepeating(Camera2Interop.Extender(videoBuilder), hardwareLog, curvePoints, forceRange)
+            configureRepeating(Camera2Interop.Extender(videoBuilder), hardwareLog, curvePoints, forceRange, gyroMode)
             val capture = videoBuilder.build()
             videoCapture = capture
             useCases += capture
@@ -524,7 +574,20 @@ class CameraController(private val activity: ComponentActivity) {
         }
         if (!effectActive) digitalZoomAllowed = false
         updateGrades(horizon)
-        if (horizon && effectActive) horizonLock.start() else horizonLock.stop()
+        horizonActive = horizon && effectActive
+        pendingRotation = -1
+        if (horizonActive && gyroMode) {
+            horizonLock.stop()
+            processor.horizonCrop = HorizonMath.fullLockCrop(16.0 / 9.0).toFloat()
+            processor.stabilizer = gyroStab
+            gyroStab.targetRotation = targetRotation
+            gyroStab.start()
+        } else {
+            processor.stabilizer = null
+            gyroStab.stop()
+            if (horizonActive) horizonLock.start() else horizonLock.stop()
+        }
+        processor.cropSharpen = if (horizonActive) CROP_SHARPEN else 0f
         onCameraBound(bound, keepZoom, previousZoom)
         fpsMeter.reset()
         val generation = ++bindGeneration
@@ -539,9 +602,17 @@ class CameraController(private val activity: ComponentActivity) {
             if (generation != bindGeneration) return@launch
             val fps = fpsMeter.fps()
             Log.i("Zoomify", "60 fps verification for $key: measured ${"%.1f".format(Locale.US, fps)} fps")
+            val eisWasOn = stabilization != Stabilization.OFF && stabilizationSupported && key !in eisOffFor60 &&
+                processor.stabilizer == null
             when {
                 fps == 0.0 -> Unit   // no frame timestamps reported; the requested rate stays
                 fps >= 55.0 -> Unit
+                eisWasOn && !isRecording -> {
+                    // Many phones can't run their EIS at 60 fps: try once more with EIS off.
+                    eisOffFor60 += key
+                    toast = "Only ${fps.roundToInt()} fps with the camera's EIS on · trying 60 fps without it"
+                    bind(keepZoom = true)
+                }
                 else -> {
                     fps60Failed += key
                     if (isRecording) {
@@ -558,7 +629,17 @@ class CameraController(private val activity: ComponentActivity) {
     /** Sharpening, Log tonemap and the lens-switch callback for the repeating (preview / video) stream. */
     private fun configureRepeating(
         extender: Camera2Interop.Extender<*>, hardwareLog: Boolean, curvePoints: Int, fpsRange: Range<Int>?,
+        rawFrames: Boolean = false,
     ) {
+        if (rawFrames) {
+            // Gyro stabiliser: the frames must move exactly as the gyro says, so no EIS warp and no OIS lens shift.
+            extender.setCaptureRequestOption(
+                CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF,
+            )
+            extender.setCaptureRequestOption(
+                CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF,
+            )
+        }
         extender.setSessionCaptureCallback(lensSwitchCallback)
         // 60 fps the phone supports (per Camera2) but CameraX's conservative check doesn't list for this session.
         if (fpsRange != null) extender.setCaptureRequestOption(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange)
@@ -606,6 +687,13 @@ class CameraController(private val activity: ComponentActivity) {
         val camera = provider.bindToLifecycle(activity, selector, config)
         effectActive = effects.isNotEmpty()
         if (wantFps != null) fps60Supported = cameraxFixed60 || camera2Fps60
+        cameraxRangesText = supported.joinToString { "${it.lower}-${it.upper}" }.ifEmpty { "none" }
+        requestedAeText = when {
+            wantFps == null -> "auto"
+            sessionFps != null -> "$sessionFps-$sessionFps (CameraX session)"
+            forceRange != null -> "${forceRange.lower}-${forceRange.upper} (Camera2 request)"
+            else -> "auto"
+        }
         activeFps = if (wantFps == 60 && (cameraxFixed60 || forceRange != null)) 60 else 30
         camera
     } catch (e: Exception) {
@@ -937,6 +1025,60 @@ class CameraController(private val activity: ComponentActivity) {
 
     fun toggleMirror() = changeAndRebind { mirrorFront = !mirrorFront }
 
+    fun toggleGyroStabilizer() = changeAndRebind { gyroStabilizer = !gyroStabilizer }
+
+    fun copyDiagnostics() {
+        val clipboard = activity.getSystemService(android.content.ClipboardManager::class.java)
+        clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("Zoomify diagnostics", fpsDiagnostics))
+        toast = "Diagnostics copied"
+    }
+
+    private val versionName: String by lazy {
+        runCatching { activity.packageManager.getPackageInfo(activity.packageName, 0).versionName }.getOrNull() ?: "?"
+    }
+
+    private fun buildFpsDiagnostics(capture: Int, preview: Int, size: Size?): String {
+        val ae = resultAeRange?.let { "${it.lower}-${it.upper}" } ?: "not reported"
+        val frameMs = if (resultFrameDurationNs > 0) "%.1f ms".format(Locale.US, resultFrameDurationNs / 1e6) else "?"
+        val expMs = if (resultExposureNs > 0) "%.1f ms".format(Locale.US, resultExposureNs / 1e6) else "?"
+        fun named(v: Int?, names: List<String>) = v?.let { names.getOrNull(it) ?: "$it" } ?: "not reported"
+        return buildString {
+            appendLine("Zoomify ${versionName} · ${android.os.Build.MODEL} · Android ${android.os.Build.VERSION.RELEASE}")
+            appendLine("Mode: ${mode.name} ${videoResolution.label} ${frameRate} fps selected · path ${effectivePath.label} · stabilisation ${stabilization.label}")
+            appendLine("60 fps: ${if (fps60Supported) "offered" else "not offered"} · $fps60Reason")
+            appendLine("Requested AE range: $requestedAeText · camera used: $ae")
+            appendLine("CameraX ranges for this session: $cameraxRangesText")
+            appendLine("Capture (camera) rate: $capture fps · frame duration $frameMs · exposure $expMs")
+            appendLine("Preview drawn: ${if (effectActive) "$preview fps" else "direct (not drawn by Zoomify)"}")
+            appendLine("Streams: camera→GPU ${processor.inputWidth}×${processor.inputHeight} · output ${size?.let { "${it.width}×${it.height}" } ?: "?"}")
+            appendLine("EIS: ${named(resultEis, listOf("off", "on", "preview"))} · OIS: ${named(resultOis, listOf("off", "on"))}" +
+                " · horizon engine: ${if (processor.stabilizer != null) "gyro 3-axis" else if (horizonActive) "level lock" else "off"}")
+            append("Last recording: ${lastRecordingFps.ifEmpty { "none yet" }}")
+        }
+    }
+
+    private fun configureGyroStabilizer(c2: Camera2CameraInfo) {
+        val orientation = c2.getCameraCharacteristic(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90
+        val active = c2.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+        val pixelArray = c2.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)
+        val physical = c2.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
+        val focal = c2.getCameraCharacteristic(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull()
+        val intrinsics = c2.getCameraCharacteristic(CameraCharacteristics.LENS_INTRINSIC_CALIBRATION)
+        val activeWidth = active?.width() ?: 4000
+        val fPx = when {
+            intrinsics != null && intrinsics[0] > 0f -> intrinsics[0].toDouble()
+            focal != null && physical != null && pixelArray != null && physical.width > 0f ->
+                focal.toDouble() * pixelArray.width / physical.width
+            else -> activeWidth * 0.8   // ~64° horizontal field of view as a last resort
+        }
+        gyroStab.sensorOrientation = orientation
+        gyroStab.activeWidth = activeWidth
+        gyroStab.activeHeight = active?.height() ?: 3000
+        gyroStab.focalActivePx = fPx
+        gyroStab.cameraClockIsRealtime = horizonLock.cameraClockIsRealtime
+        Log.i("Zoomify", "Gyro stabiliser: sensor $orientation°, active ${activeWidth}x${active?.height()}, f=${"%.0f".format(Locale.US, fPx)} px")
+    }
+
     fun chooseLook(value: ColorLook) {
         colorLook = value
         processor.look = value
@@ -1136,10 +1278,12 @@ class CameraController(private val activity: ComponentActivity) {
                     if (uri != Uri.EMPTY) {
                         ioExecutor.execute {
                             val bitmap = MediaStoreHelper.loadThumbnail(activity, uri)
+                            val recorded = MediaStoreHelper.recordedFrameRate(activity, uri)
                             mainExecutor.execute {
                                 lastCapture = LastCapture(uri, isVideo = true)
                                 if (bitmap != null) thumbnail = bitmap
-                                toast = "Video saved $sizeText · MP4"
+                                lastRecordingFps = recorded?.let { "%.1f fps (%d frames)".format(Locale.US, it.first, it.second) } ?: "unknown"
+                                toast = "Video saved $sizeText · MP4" + (recorded?.let { " · %.1f fps recorded".format(Locale.US, it.first) } ?: "")
                             }
                         }
                     } else if (event.hasError()) {

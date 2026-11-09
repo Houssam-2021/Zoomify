@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.zoomify.camera.CameraController
+import com.zoomify.camera.CaptureMode
 import com.zoomify.camera.ColorLook
 import com.zoomify.camera.LutLibrary
 import com.zoomify.camera.LutTarget
@@ -126,6 +127,18 @@ fun SettingsSheet(c: CameraController, onDismiss: () -> Unit) {
                     "~2× crop (no black corners) and the ultra-wide lens for a ~1× view. The video keeps the orientation " +
                     "it started in. Uses the Cinematic path; 4K gives the sharpest result." +
                     if (c.stabilizationSupported) "" else " Standard EIS isn't offered by this camera.")
+            if (c.stabilization == Stabilization.HORIZON_LOCK && c.gyroStabilizerAvailable) {
+                Toggle("Gyro stabiliser (experimental)",
+                    "Also smooths up/down and side-to-side shake using the gyroscope, frame by frame, with rolling-shutter " +
+                        "correction. It turns the camera's own EIS and OIS off while it runs. Off = the current horizon lock.",
+                    c.gyroStabilizer, c::toggleGyroStabilizer)
+            }
+            if (c.mode == CaptureMode.VIDEO && c.fpsDiagnostics.isNotEmpty()) {
+                Text("Frame-rate diagnostics", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(top = 20.dp))
+                Note(c.fpsDiagnostics)
+                ActionButton("Copy diagnostics", c::copyDiagnostics)
+            }
             if (c.videoProfile == VideoProfile.LOG) {
                 Toggle("Log view assist", "Shows Log converted to Rec.709 in the viewfinder. Recordings stay Log.",
                     c.logViewAssist, c::toggleLogViewAssist)
