@@ -91,8 +91,8 @@ object FrameRateSupport {
             info.isEncoder && info.supportedTypes.any { it.equals(MediaFormat.MIMETYPE_VIDEO_AVC, true) } &&
                 runCatching {
                     val caps = info.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC).videoCapabilities
-                    caps.areSizeAndRateSupported(size.width, size.height, 60.0) ||
-                        caps.areSizeAndRateSupported(size.height, size.width, 60.0)
+                    caps != null && (caps.areSizeAndRateSupported(size.width, size.height, 60.0) ||
+                        caps.areSizeAndRateSupported(size.height, size.width, 60.0))
                 }.getOrDefault(false)
         }
 }
