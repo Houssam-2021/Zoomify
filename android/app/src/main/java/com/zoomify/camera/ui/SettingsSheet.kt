@@ -125,7 +125,7 @@ fun SettingsSheet(c: CameraController, onDismiss: () -> Unit) {
                 note = "Horizon lock keeps the horizon level even if you rotate the phone all the way round, with a fixed " +
                     "~2× crop (no black corners) and the ultra-wide lens for a ~1× view. The video keeps the orientation " +
                     "it started in. Uses the Cinematic path; 4K gives the sharpest result." +
-                    if (c.stabilizationSupported) "" else " Standard EIS isn't offered by this camera."))
+                    if (c.stabilizationSupported) "" else " Standard EIS isn't offered by this camera.")
             if (c.videoProfile == VideoProfile.LOG) {
                 Toggle("Log view assist", "Shows Log converted to Rec.709 in the viewfinder. Recordings stay Log.",
                     c.logViewAssist, c::toggleLogViewAssist)
