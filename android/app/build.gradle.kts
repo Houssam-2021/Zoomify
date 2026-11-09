@@ -39,6 +39,10 @@ android {
         compose = true
     }
 
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
     lint {
         checkReleaseBuilds = false
         abortOnError = false
@@ -69,4 +73,6 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.exifinterface:exifinterface:1.3.7")
+
+    testImplementation("junit:junit:4.13.2")
 }

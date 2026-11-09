@@ -106,9 +106,9 @@ fun SettingsSheet(c: CameraController, onDismiss: () -> Unit) {
                 note = "50 Mb/s ≈ 375 MB/minute. The phone's encoder may cap very high targets.")
             Choices("Frame rate", "${c.activeFps} fps", listOf(30, 60), c.frameRate, { "$it fps" },
                 enabled = { it == 30 || c.fps60Supported }, onSelect = c::chooseFrameRate,
-                note = if (c.fps60Supported) "60 fps is supported by this camera at ${c.videoResolution.label} in this mode."
-                else "60 fps isn't supported by this camera at ${c.videoResolution.label} in this mode. " +
-                    "Try 1080p, Sensor HQ or turning Horizon lock off.")
+                note = (if (c.fps60Supported) "60 fps at ${c.videoResolution.label}: ${c.fps60Reason}"
+                else "No 60 fps at ${c.videoResolution.label} in this mode. ${c.fps60Reason} Try 1080p or Sensor HQ.") +
+                    (if (c.measuredFps > 0) " Camera is delivering ${c.measuredFps} fps now (measured)." else ""))
             Choices("Video recording path", c.effectivePath.label, VideoPath.entries, c.videoPath, { it.label },
                 onSelect = c::chooseVideoPath,
                 note = "Cinematic records zoom past the lens, colour, LUT and motion blur at full resolution (including 4K). " +
@@ -122,8 +122,10 @@ fun SettingsSheet(c: CameraController, onDismiss: () -> Unit) {
                     "HDR records 10-bit HLG where supported.")
             Choices("Stabilization", c.stabilization.label, Stabilization.entries, c.stabilization, { it.label },
                 onSelect = c::chooseStabilization,
-                note = "Horizon lock keeps the horizon level while you tilt the phone (up to ±15°) with a fixed crop. " +
-                    "It uses the Cinematic path." + if (c.stabilizationSupported) "" else " Standard EIS isn't offered by this camera.")
+                note = "Horizon lock keeps the horizon level even if you rotate the phone all the way round, with a fixed " +
+                    "~2× crop (no black corners) and the ultra-wide lens for a ~1× view. The video keeps the orientation " +
+                    "it started in. Uses the Cinematic path; 4K gives the sharpest result." +
+                    if (c.stabilizationSupported) "" else " Standard EIS isn't offered by this camera."))
             if (c.videoProfile == VideoProfile.LOG) {
                 Toggle("Log view assist", "Shows Log converted to Rec.709 in the viewfinder. Recordings stay Log.",
                     c.logViewAssist, c::toggleLogViewAssist)

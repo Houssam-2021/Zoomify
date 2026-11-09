@@ -43,10 +43,12 @@ enum class PhotoFormat(val label: String) {
     val isRaw: Boolean get() = this == RAW || this == RAW_ONLY
 }
 
-enum class VideoResolution(val label: String, val quality: Quality) {
-    UHD("4K / 30", Quality.UHD),
-    FHD("1080p", Quality.FHD),
-    HD("720p", Quality.HD),
+enum class VideoResolution(val label: String, val quality: Quality, val width: Int, val height: Int) {
+    UHD("4K", Quality.UHD, 3840, 2160),
+    FHD("1080p", Quality.FHD, 1920, 1080),
+    HD("720p", Quality.HD, 1280, 720),
+    ;
+    val size: android.util.Size get() = android.util.Size(width, height)
 }
 
 /** Velora's bitrate choices plus a very high one. */

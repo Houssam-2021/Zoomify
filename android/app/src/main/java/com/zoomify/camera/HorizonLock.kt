@@ -5,84 +5,210 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.os.Handler
+import android.os.HandlerThread
+import android.os.SystemClock
 import android.view.Surface
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.exp
+import kotlin.math.hypot
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
- * Keeps the horizon level: reads the phone's roll from the gravity sensor and counter-rotates the frame on the GPU.
+ * Horizon lock in the style of Samsung's: the horizon stays level however far the phone is rolled, a full 360°.
  *
- * The frame is cropped by a fixed amount, enough to fully correct up to [MAX_DEGREES] of tilt without showing
- * corners (a fixed crop, so the picture doesn't "breathe" as you tilt). Bigger tilts are corrected up to that limit.
+ * - The phone's roll comes from the gravity sensor (gyro-fused on most phones), read at the sensor's fastest rate on
+ *   its own thread and cleaned by a One Euro filter: steady when the phone is still, no lag when it turns.
+ * - Every camera frame is levelled with the roll measured at the moment that frame was captured (from a short
+ *   timestamped history), not the latest reading, so the picture doesn't wobble during fast turns.
+ * - The crop is fixed at the size that never shows a corner at any angle (≈2.04× for 16:9), so the picture doesn't
+ *   "breathe" as you rotate. Zoomify switches to the ultra-wide when horizon lock is turned on to compensate, like
+ *   Samsung does.
+ * - The recording's orientation is fixed when recording starts; the horizon is held level relative to it.
  */
-class HorizonLock(context: Context, private val onUpdate: (angle: Float, crop: Float) -> Unit) : SensorEventListener {
+class HorizonLock(context: Context, private val onCrop: (crop: Float) -> Unit) : SensorEventListener {
     private val sensors = context.getSystemService(SensorManager::class.java)
-    private val sensor: Sensor? = sensors.getDefaultSensor(Sensor.TYPE_GRAVITY)
-        ?: sensors.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-    private var running = false
-    private var smoothed = 0.0
-    private var initialised = false
+    private val gravity: Sensor? = sensors.getDefaultSensor(Sensor.TYPE_GRAVITY)
+    private val sensor: Sensor? = gravity ?: sensors.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+    private var thread: HandlerThread? = null
+    @Volatile private var running = false
+
+    // The raw accelerometer also measures hand movement, so it gets stronger smoothing than the fused gravity sensor.
+    private val filter = if (gravity != null) OneEuroAngle(minCutoffHz = GRAVITY_MIN_CUTOFF, beta = GRAVITY_BETA)
+    else OneEuroAngle(minCutoffHz = 1.5, beta = 0.8)
+    private val history = AngleHistory()
 
     /** The orientation the video is being recorded in (Surface.ROTATION_*). */
     @Volatile var targetRotation = Surface.ROTATION_0
 
-    /** Width / height of the recorded frame as it is played back (e.g. 9/16 for portrait). */
-    @Volatile var outputAspect = 9f / 16f
+    /** True if the camera's frame timestamps use the same clock as sensor events (elapsedRealtime). */
+    @Volatile var cameraClockIsRealtime = true
 
     val available: Boolean get() = sensor != null
 
     fun start() {
         if (running || sensor == null) return
         running = true
-        initialised = false
-        sensors.registerListener(this, sensor, SensorManager.SENSOR_DELAY_GAME)
+        filter.reset()
+        history.clear()
+        onCrop(HorizonMath.fullLockCrop(16.0 / 9.0).toFloat())
+        val t = HandlerThread("ZoomifyHorizon").also { it.start() }
+        thread = t
+        sensors.registerListener(this, sensor, SensorManager.SENSOR_DELAY_FASTEST, Handler(t.looper))
     }
 
     fun stop() {
         if (!running) return
         running = false
         sensors.unregisterListener(this)
-        onUpdate(0f, 1f)
+        thread?.quitSafely()
+        thread = null
+        history.clear()
+        onCrop(1f)
+    }
+
+    /**
+     * Counter-rotation (radians, counter-clockwise in the image as seen by the viewer of an un-mirrored back-camera
+     * picture) for a camera frame captured at [frameTimestampNs] (SurfaceTexture / sensor timestamp).
+     */
+    fun angleAt(frameTimestampNs: Long): Float {
+        if (!running) return 0f
+        val t = if (cameraClockIsRealtime) frameTimestampNs
+        else frameTimestampNs + (SystemClock.elapsedRealtimeNanos() - System.nanoTime())
+        return history.at(t).toFloat()
     }
 
     override fun onSensorChanged(event: SensorEvent) {
         val gx = event.values[0].toDouble()
         val gy = event.values[1].toDouble()
-        if (abs(gx) + abs(gy) < 2.0) return   // phone lying flat: roll is undefined, keep the last value
-        // Clockwise roll of the phone, seen from the screen side (0 = upright portrait).
-        val roll = atan2(-gx, gy)
-        val nominal = when (targetRotation) {
-            Surface.ROTATION_90 -> -PI / 2
-            Surface.ROTATION_180 -> PI
-            Surface.ROTATION_270 -> PI / 2
-            else -> 0.0
-        }
-        var relative = roll - nominal
-        while (relative > PI) relative -= 2 * PI
-        while (relative < -PI) relative += 2 * PI
-
-        // Low-pass to remove hand tremor in the sensor; the camera's own stabilisation handles the rest.
-        smoothed = if (!initialised) relative else smoothed + (relative - smoothed) * 0.25
-        initialised = true
-
-        val limit = MAX_DEGREES * PI / 180
-        val corrected = smoothed.coerceIn(-limit, limit)
-        // The phone rolled clockwise by `corrected`, so the scene appears rotated counter-clockwise: undo it.
-        onUpdate((-corrected).toFloat(), cropFor(limit, outputAspect.toDouble()).toFloat())
+        val gz = event.values[2].toDouble()
+        // Pointing straight up/down (or lying flat): roll is undefined, so hold the last value.
+        if (hypot(gx, gy) < 0.3 * sqrt(gx * gx + gy * gy + gz * gz)) return
+        val roll = HorizonMath.roll(gx, gy)
+        val relative = HorizonMath.wrap(roll - HorizonMath.nominal(targetRotation))
+        val smoothed = filter.filter(relative, event.timestamp)
+        // The phone rolled clockwise, so the scene appears rotated counter-clockwise: undo it.
+        history.add(event.timestamp, -smoothed)
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
 
     companion object {
-        const val MAX_DEGREES = 15.0
+        /** One Euro tuning for the (gyro-fused) gravity sensor: ~5 Hz when still, faster the quicker you turn. */
+        const val GRAVITY_MIN_CUTOFF = 5.0
+        const val GRAVITY_BETA = 2.0
+    }
+}
 
-        /** Zoom needed so a frame of this aspect, rotated by [angle], still covers the whole output. */
-        fun cropFor(angle: Double, aspect: Double): Double {
-            val ratio = if (aspect >= 1) aspect else 1 / aspect
-            return cos(abs(angle)) + sin(abs(angle)) * ratio
+object HorizonMath {
+    /** Clockwise roll of the phone seen from the screen (0 = upright portrait), from gravity in device axes. */
+    fun roll(gx: Double, gy: Double): Double = atan2(-gx, gy)
+
+    /** The roll at which a recording in this orientation is level. */
+    fun nominal(rotation: Int): Double = when (rotation) {
+        Surface.ROTATION_90 -> -PI / 2
+        Surface.ROTATION_180 -> PI
+        Surface.ROTATION_270 -> PI / 2
+        else -> 0.0
+    }
+
+    fun wrap(a: Double): Double {
+        var x = a % (2 * PI)
+        if (x > PI) x -= 2 * PI
+        if (x < -PI) x += 2 * PI
+        return x
+    }
+
+    /** Zoom needed so a frame of this aspect, rotated by [angle], still covers the whole output. */
+    fun cropFor(angle: Double, aspect: Double): Double {
+        val ratio = if (aspect >= 1) aspect else 1 / aspect
+        val a = abs(wrap(angle))
+        val folded = if (a > PI / 2) PI - a else a
+        return cos(folded) + sin(folded) * ratio
+    }
+
+    /** The smallest fixed zoom that covers the output at every angle: √(1 + r²), the worst case of [cropFor]. */
+    fun fullLockCrop(aspect: Double): Double {
+        val r = if (aspect >= 1) aspect else 1 / aspect
+        return sqrt(1 + r * r)
+    }
+
+    /**
+     * Sign to apply in an output's own coordinates. The raw back-camera picture behaves like a window (+1); the raw
+     * front-camera picture is seen from the opposite side (-1); a mirrored output flips it again.
+     */
+    fun outputSign(frontCamera: Boolean, mirroredOutput: Boolean): Float =
+        (if (frontCamera) -1f else 1f) * (if (mirroredOutput) -1f else 1f)
+}
+
+/**
+ * One Euro filter (Casiez et al.) on an angle, unwrapped so passing ±180° doesn't make it spin the long way round.
+ * Low cutoff when still (removes sensor noise), higher cutoff as the angle changes faster (no lag when turning).
+ */
+class OneEuroAngle(private val minCutoffHz: Double, private val beta: Double, private val dCutoffHz: Double = 1.0) {
+    private var x = 0.0
+    private var dx = 0.0
+    private var lastNs = 0L
+    private var ready = false
+
+    fun reset() { ready = false }
+
+    /** Returns the filtered angle, wrapped to (-π, π]. */
+    fun filter(angle: Double, timestampNs: Long): Double {
+        if (!ready || timestampNs <= lastNs) {
+            if (!ready) { x = angle; dx = 0.0; ready = true; lastNs = timestampNs }
+            return HorizonMath.wrap(x)
         }
+        val dt = ((timestampNs - lastNs) / 1e9).coerceIn(1e-4, 0.25)
+        lastNs = timestampNs
+        val target = x + HorizonMath.wrap(angle - x)   // unwrap next to the current estimate
+        val rawDx = (target - x) / dt
+        dx += alpha(dCutoffHz, dt) * (rawDx - dx)
+        val cutoff = minCutoffHz + beta * abs(dx)
+        x += alpha(cutoff, dt) * (target - x)
+        return HorizonMath.wrap(x)
+    }
+
+    private fun alpha(cutoffHz: Double, dt: Double): Double = 1.0 - exp(-2 * PI * cutoffHz * dt)
+}
+
+/** Timestamped angles (unwrapped internally), interpolated at a camera frame's timestamp. */
+class AngleHistory(capacity: Int = 1024) {
+    private val times = LongArray(capacity)
+    private val angles = DoubleArray(capacity)
+    private var head = 0
+    private var count = 0
+
+    @Synchronized fun clear() { head = 0; count = 0 }
+
+    @Synchronized fun add(timestampNs: Long, angle: Double) {
+        if (count > 0) {
+            val last = (head - 1 + times.size) % times.size
+            if (timestampNs <= times[last]) return
+            angles[head] = angles[last] + HorizonMath.wrap(angle - angles[last])
+        } else angles[head] = angle
+        times[head] = timestampNs
+        head = (head + 1) % times.size
+        if (count < times.size) count++
+    }
+
+    /** Angle at [t]: interpolated between samples, the newest one if [t] is later, the oldest one if earlier. */
+    @Synchronized fun at(t: Long): Double {
+        if (count == 0) return 0.0
+        val newest = (head - 1 + times.size) % times.size
+        if (t >= times[newest]) return HorizonMath.wrap(angles[newest])
+        for (i in 1 until count) {
+            val b = (newest - i + 1 + times.size) % times.size
+            val a = (newest - i + times.size) % times.size
+            if (times[a] <= t) {
+                val f = (t - times[a]).toDouble() / (times[b] - times[a]).coerceAtLeast(1)
+                return HorizonMath.wrap(angles[a] + (angles[b] - angles[a]) * f)
+            }
+        }
+        return HorizonMath.wrap(angles[(newest - count + 1 + times.size) % times.size])
     }
 }

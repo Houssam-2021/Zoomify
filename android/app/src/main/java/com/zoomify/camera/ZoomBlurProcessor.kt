@@ -88,9 +88,13 @@ class ZoomBlurProcessor : SurfaceProcessor {
     @Volatile var look = ColorLook.NATURAL
     @Volatile var previewGrade = OutputGrade()
     @Volatile var videoGrade = OutputGrade(blurScale = 0.65f)
-    /** Content rotation for horizon lock, radians (counter-clockwise), and the crop that hides the corners. */
-    @Volatile var horizonAngle = 0f
+    /**
+     * Horizon lock: the counter-rotation (radians) for a frame with the given camera timestamp, and the crop that
+     * hides the corners. The rotation's direction is corrected per output for the front camera and mirroring.
+     */
+    @Volatile var horizonSource: ((Long) -> Float)? = null
     @Volatile var horizonCrop = 1f
+    @Volatile var frontCamera = false
     /** Number of frames drawn to the preview, for the FPS readout. */
     @Volatile var previewFrames = 0L
         private set
@@ -242,24 +246,32 @@ class ZoomBlurProcessor : SurfaceProcessor {
         frameCount++
         val seed = (frameCount % 64) * 0.618034f
         val digital = digitalZoom
+        val horizon = horizonSource?.invoke(timestamp) ?: 0f
+        val texDet = det2(textureMatrix)
 
         for ((output, target) in outputs) {
             output.updateTransformMatrix(outputMatrix, textureMatrix)
             if (!EGL14.eglMakeCurrent(display, target.surface, target.surface, context)) continue
+            // An output is mirrored if its transform flips handedness relative to the camera texture's own.
+            val mirrored = det2(outputMatrix) * texDet < 0f
+            val angle = horizon * HorizonMath.outputSign(frontCamera, mirrored)
             if (target.isPreview) {
-                drawPreview(target, digital, previewGrade, pulse * 0.75f, seed)
+                drawPreview(target, digital, previewGrade, pulse * 0.75f, seed, angle)
                 previewFrames++
             } else {
                 val grade = videoGrade
                 GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
-                drawCamera(target.width, target.height, digital, blur * grade.blurScale, grade, 0f, seed, dummyTexture)
+                drawCamera(target.width, target.height, digital, blur * grade.blurScale, grade, 0f, seed, dummyTexture, angle)
                 EGLExt.eglPresentationTimeANDROID(display, target.surface, timestamp)
                 EGL14.eglSwapBuffers(display, target.surface)
             }
         }
     }
 
-    private fun drawPreview(target: Target, digital: Float, grade: OutputGrade, mix: Float, seed: Float) {
+    /** Determinant of the 2D (upper-left) part of a column-major 4x4 matrix. */
+    private fun det2(m: FloatArray): Float = m[0] * m[5] - m[4] * m[1]
+
+    private fun drawPreview(target: Target, digital: Float, grade: OutputGrade, mix: Float, seed: Float, angle: Float) {
         ensureHistory(target)
         val current = target.index
         val previous = 1 - current
@@ -267,7 +279,7 @@ class ZoomBlurProcessor : SurfaceProcessor {
         // Pass 1: camera (+ blur, grade, lens-switch cross-fade) into this frame's history texture.
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, target.framebuffers[current])
         drawCamera(target.width, target.height, digital, blur * grade.blurScale, grade,
-            if (target.historyReady) mix else 0f, seed, target.textures[previous])
+            if (target.historyReady) mix else 0f, seed, target.textures[previous], angle)
 
         // Pass 2: copy to the screen.
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
@@ -285,7 +297,7 @@ class ZoomBlurProcessor : SurfaceProcessor {
 
     private fun drawCamera(
         width: Int, height: Int, digital: Float, blur: Float, grade: OutputGrade,
-        historyMix: Float, seed: Float, historyTexture: Int,
+        historyMix: Float, seed: Float, historyTexture: Int, angle: Float,
     ) {
         val p = mainProgram
         GLES20.glViewport(0, 0, width, height)
@@ -312,7 +324,7 @@ class ZoomBlurProcessor : SurfaceProcessor {
         GLES20.glUniform1f(uniform(p, "uShaped"), if (grade.look && currentLook.shaped) 1f else 0f)
         GLES20.glUniform1f(uniform(p, "uLutOn"), if (lutOn) 1f else 0f)
         GLES20.glUniform1f(uniform(p, "uLutSize"), maxOf(2, lutSize).toFloat())
-        GLES20.glUniform1f(uniform(p, "uAngle"), if (grade.horizon) horizonAngle else 0f)
+        GLES20.glUniform1f(uniform(p, "uAngle"), if (grade.horizon) angle else 0f)
         GLES20.glUniform1f(uniform(p, "uCrop"), if (grade.horizon) horizonCrop else 1f)
         GLES20.glUniform1f(uniform(p, "uAspect"), width.toFloat() / height.toFloat())
         drawQuad(p)

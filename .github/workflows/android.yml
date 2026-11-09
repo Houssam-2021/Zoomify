@@ -71,6 +71,9 @@ jobs:
           ./gradlew --no-daemon assembleRelease -PzoomifyTestVersionCode=$(( ${{ steps.meta.outputs.version_code }} + 1 ))
           cp app/build/outputs/apk/release/app-release-unsigned.apk "$RUNNER_TEMP/future-unsigned.apk"
 
+      - name: Unit tests (60 fps decision, frame-rate meter, horizon lock maths)
+        run: ./gradlew --no-daemon testReleaseUnitTest
+
       # Public releases are never signed with the compromised legacy key. Without the new key, stop here.
       - name: Require the new signing key
         if: env.HAS_SIGNING_KEY != 'true'

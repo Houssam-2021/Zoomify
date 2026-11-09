@@ -154,6 +154,10 @@ class CameraController(private val activity: ComponentActivity) {
     var frameRate by mutableIntStateOf(30); private set
     var fps60Supported by mutableStateOf(false); private set
     var activeFps by mutableIntStateOf(30); private set
+    /** Why 60 fps is or isn't available here (from the phone's Camera2 capabilities and the measured rate). */
+    var fps60Reason by mutableStateOf(""); private set
+    /** The camera's real frame rate, measured from frame timestamps (0 until known). */
+    var measuredFps by mutableIntStateOf(0); private set
 
     // endregion
 
@@ -161,9 +165,15 @@ class CameraController(private val activity: ComponentActivity) {
     private val ioExecutor = Executors.newSingleThreadExecutor()
     private val processor = ZoomBlurProcessor()
     private val zoomAnimator = ZoomAnimator { zoom, velocity -> onZoomFrame(zoom, velocity) }
-    private val horizonLock = HorizonLock(activity) { angle, crop ->
-        processor.horizonAngle = angle
-        processor.horizonCrop = crop
+    private val horizonLock = HorizonLock(activity) { crop -> processor.horizonCrop = crop }
+    private val fpsMeter = FpsMeter()
+    /** 60 fps combinations (camera, size, path, stabilisation) where the camera was measured below 60. */
+    private val fps60Failed = mutableSetOf<String>()
+    private var fps60Key = ""
+    private var bindGeneration = 0
+
+    init {
+        processor.horizonSource = horizonLock::angleAt
     }
     private val vibrator: Vibrator? = activity.getSystemService(Vibrator::class.java)
 
@@ -204,6 +214,7 @@ class CameraController(private val activity: ComponentActivity) {
         override fun onCaptureCompleted(
             session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult,
         ) {
+            result.get(CaptureResult.SENSOR_TIMESTAMP)?.let(fpsMeter::add)
             val id = result.get(CaptureResult.LOGICAL_MULTI_CAMERA_ACTIVE_PHYSICAL_ID) ?: return
             val previous = lastPhysicalCameraId
             if (id != previous) {
@@ -223,6 +234,13 @@ class CameraController(private val activity: ComponentActivity) {
                 else -> Surface.ROTATION_0
             }
             if (rotation == targetRotation || isRecording) return
+            // Hysteresis: only switch once the phone is clearly in the new orientation (within 30° of it), so the
+            // orientation (and horizon lock's reference) doesn't flicker when the phone is held near 45°.
+            val center = when (rotation) {
+                Surface.ROTATION_270 -> 90; Surface.ROTATION_180 -> 180; Surface.ROTATION_90 -> 270; else -> 0
+            }
+            val off = abs(((orientation - center + 540) % 360) - 180)
+            if (off > 30) return
             targetRotation = rotation
             horizonLock.targetRotation = rotation
             imageCapture?.targetRotation = rotation
@@ -287,7 +305,9 @@ class CameraController(private val activity: ComponentActivity) {
                 else -> "SD"
             }
             val lens = if (lensFacing == CameraSelector.LENS_FACING_FRONT) "FRONT" else "REAR"
-            val fpsLabel = if (mode == CaptureMode.VIDEO) activeFps else 30
+            val measured = fpsMeter.fps().roundToInt()
+            measuredFps = measured
+            val fpsLabel = if (measured > 0) measured else if (mode == CaptureMode.VIDEO) activeFps else 30
             cameraStatus = "$lens · $label $fpsLabel FPS"
             sourceInfo = if (size != null) "LIVE ${size.width} × ${size.height} · $fpsLabel FPS" else "LIVE SOURCE"
             engineStatus = if (effectActive) "PREVIEW $fps FPS" else "DIRECT SENSOR"
@@ -365,6 +385,19 @@ class CameraController(private val activity: ComponentActivity) {
             else -> videoPath
         }
 
+        // 60 fps: decided from this phone's Camera2 capabilities (AE ranges, stream frame durations at the real
+        // sizes, encoder limits), then confirmed by measuring the delivered frame rate after binding.
+        val fpsCheck = if (isVideo) FrameRateSupport.check(
+            activity, c2.cameraId, videoResolution.size, Size(previewPerformance.width, previewPerformance.height),
+        ) else null
+        fps60Key = "${c2.cameraId}|$videoResolution|$effectivePath|$stabilization|$previewPerformance|$videoProfile"
+        val measuredBelow60 = fps60Key in fps60Failed
+        val camera2Fps60 = fpsCheck?.supported == true && !measuredBelow60
+        val forceRange = if (isVideo && frameRate == 60 && camera2Fps60) fpsCheck?.aeRange else null
+        processor.frontCamera = front
+        horizonLock.cameraClockIsRealtime = c2.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE) ==
+            CameraMetadata.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME
+
         // Preview: 16:9 like Velora, sized by "Preview performance".
         val previewBuilder = Preview.Builder().setResolutionSelector(
             ResolutionSelector.Builder()
@@ -377,7 +410,7 @@ class CameraController(private val activity: ComponentActivity) {
                 )
                 .build()
         )
-        configureRepeating(Camera2Interop.Extender(previewBuilder), hardwareLog, curvePoints)
+        configureRepeating(Camera2Interop.Extender(previewBuilder), hardwareLog, curvePoints, forceRange)
         val newPreview = previewBuilder.build()
         newPreview.setSurfaceProvider(previewView.surfaceProvider)
         preview = newPreview
@@ -456,7 +489,7 @@ class CameraController(private val activity: ComponentActivity) {
             if (stabilization != Stabilization.OFF && stabilizationSupported) {
                 videoBuilder.setVideoStabilizationEnabled(true)
             }
-            configureRepeating(Camera2Interop.Extender(videoBuilder), hardwareLog, curvePoints)
+            configureRepeating(Camera2Interop.Extender(videoBuilder), hardwareLog, curvePoints, forceRange)
             val capture = videoBuilder.build()
             videoCapture = capture
             useCases += capture
@@ -469,9 +502,20 @@ class CameraController(private val activity: ComponentActivity) {
         }
 
         val wantFps = if (isVideo) frameRate else null
-        val bound = bindSession(provider, selector, cameraInfo, useCases, effectTargets, wantFps)
-            ?: if (effectTargets != null) bindSession(provider, selector, cameraInfo, useCases, null, wantFps) else null
-        if (isVideo && frameRate == 60 && activeFps != 60) {
+        val bound = bindSession(provider, selector, cameraInfo, useCases, effectTargets, wantFps, forceRange, camera2Fps60, measuredBelow60)
+            ?: if (effectTargets != null) {
+                bindSession(provider, selector, cameraInfo, useCases, null, wantFps, forceRange, camera2Fps60, measuredBelow60)
+            } else null
+        if (isVideo) {
+            fps60Reason = when {
+                measuredBelow60 -> "60 fps was tried here but the camera delivered fewer frames, so it's off for this combination."
+                fpsCheck?.supported == true -> "Supported: ${fpsCheck.reason}."
+                fps60Supported -> "Supported (reported by CameraX for this combination)."
+                else -> "Not available: ${fpsCheck?.reason ?: "unknown"}."
+            }
+            Log.i("Zoomify", "60 fps check for $fps60Key: supported=$fps60Supported active=$activeFps; $fps60Reason")
+        }
+        if (isVideo && frameRate == 60 && activeFps != 60 && !measuredBelow60) {
             toast = "60 fps isn't supported at ${videoResolution.label} in this mode · recording at $activeFps fps"
         }
         if (bound == null) {
@@ -482,11 +526,42 @@ class CameraController(private val activity: ComponentActivity) {
         updateGrades(horizon)
         if (horizon && effectActive) horizonLock.start() else horizonLock.stop()
         onCameraBound(bound, keepZoom, previousZoom)
+        fpsMeter.reset()
+        val generation = ++bindGeneration
+        if (isVideo && activeFps == 60) verify60(generation)
+    }
+
+    /** Confirms the camera really delivers ~60 distinct frames per second; otherwise falls back to 30 and says so. */
+    private fun verify60(generation: Int) {
+        val key = fps60Key
+        activity.lifecycleScope.launch {
+            delay(2500)
+            if (generation != bindGeneration) return@launch
+            val fps = fpsMeter.fps()
+            Log.i("Zoomify", "60 fps verification for $key: measured ${"%.1f".format(Locale.US, fps)} fps")
+            when {
+                fps == 0.0 -> Unit   // no frame timestamps reported; the requested rate stays
+                fps >= 55.0 -> Unit
+                else -> {
+                    fps60Failed += key
+                    if (isRecording) {
+                        toast = "The camera is delivering ${fps.roundToInt()} fps, not 60, in this mode"
+                    } else {
+                        toast = "The camera delivered ${fps.roundToInt()} fps instead of 60 here · using 30 fps"
+                        bind(keepZoom = true)
+                    }
+                }
+            }
+        }
     }
 
     /** Sharpening, Log tonemap and the lens-switch callback for the repeating (preview / video) stream. */
-    private fun configureRepeating(extender: Camera2Interop.Extender<*>, hardwareLog: Boolean, curvePoints: Int) {
+    private fun configureRepeating(
+        extender: Camera2Interop.Extender<*>, hardwareLog: Boolean, curvePoints: Int, fpsRange: Range<Int>?,
+    ) {
         extender.setSessionCaptureCallback(lensSwitchCallback)
+        // 60 fps the phone supports (per Camera2) but CameraX's conservative check doesn't list for this session.
+        if (fpsRange != null) extender.setCaptureRequestOption(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange)
         if (sharpening != Sharpening.CAMERA) {
             // The stock preview/video sharpening is what makes Velora look over-sharpened (and digital zoom
             // magnifies its halos), so it is switched off for the live stream.
@@ -507,26 +582,31 @@ class CameraController(private val activity: ComponentActivity) {
     private fun bindSession(
         provider: ProcessCameraProvider, selector: CameraSelector, cameraInfo: CameraInfo,
         useCases: List<UseCase>, effectTargets: Int?, wantFps: Int?,
+        forceRange: Range<Int>?, camera2Fps60: Boolean, measuredBelow60: Boolean,
     ): Camera? = try {
         val effects: List<CameraEffect> =
             if (effectTargets != null) listOf(ZoomBlurEffect(effectTargets, processor)) else emptyList()
         val probe = SessionConfig(useCases = useCases, effects = effects)
         val supported = if (wantFps != null) cameraInfo.getSupportedFrameRateRanges(probe) else emptySet()
         fun fixed(fps: Int) = supported.any { it.lower == fps && it.upper == fps }
-        val fps = when {
+        val cameraxFixed60 = fixed(60) && !measuredBelow60
+        // A guaranteed CameraX range where it lists one; otherwise 60 fps is requested through Camera2
+        // (forceRange, already set on the use cases) when the phone's own capabilities allow it.
+        val sessionFps = when {
             wantFps == null -> null
-            wantFps == 60 && fixed(60) -> 60
+            wantFps == 60 && cameraxFixed60 -> 60
+            wantFps == 60 && forceRange != null -> null
             fixed(30) -> 30
             else -> null
         }
-        val config = if (fps != null) {
-            SessionConfig(useCases = useCases, effects = effects, frameRateRange = Range(fps, fps))
+        val config = if (sessionFps != null) {
+            SessionConfig(useCases = useCases, effects = effects, frameRateRange = Range(sessionFps, sessionFps))
         } else probe
         provider.unbindAll()
         val camera = provider.bindToLifecycle(activity, selector, config)
         effectActive = effects.isNotEmpty()
-        if (wantFps != null) fps60Supported = fixed(60)
-        activeFps = fps ?: 30
+        if (wantFps != null) fps60Supported = cameraxFixed60 || camera2Fps60
+        activeFps = if (wantFps == 60 && (cameraxFixed60 || forceRange != null)) 60 else 30
         camera
     } catch (e: Exception) {
         Log.w("Zoomify", "Binding failed (effect=${effectTargets != null})", e)
@@ -835,9 +915,19 @@ class CameraController(private val activity: ComponentActivity) {
     fun choosePhotoFormat(value: PhotoFormat) = changeAndRebind { photoFormat = value }
     fun choosePreviewPerformance(value: PreviewPerformance) = changeAndRebind { previewPerformance = value }
     fun chooseSharpening(value: Sharpening) = changeAndRebind { sharpening = value }
-    fun chooseStabilization(value: Stabilization) = changeAndRebind {
-        stabilization = value
-        if (value == Stabilization.HORIZON_LOCK && !horizonLock.available) toast = "No motion sensor for horizon lock"
+    fun chooseStabilization(value: Stabilization) {
+        changeAndRebind {
+            stabilization = value
+            if (value == Stabilization.HORIZON_LOCK && !horizonLock.available) toast = "No motion sensor for horizon lock"
+        }
+        // Horizon lock crops ~2× to stay level at any angle; like Samsung, start on the ultra-wide so the view
+        // stays close to the normal 1× field of view.
+        if (value == Stabilization.HORIZON_LOCK && !isRecording && mode == CaptureMode.VIDEO &&
+            lensFacing == CameraSelector.LENS_FACING_BACK && zoomUi.minZoom < 0.95f && zoomAnimator.targetZoom >= 0.95f
+        ) {
+            setZoom(zoomUi.minZoom)
+            toast = "Horizon lock on · ultra-wide for a ~1× view"
+        }
     }
     fun chooseVideoProfile(value: VideoProfile) = changeAndRebind {
         videoProfile = value
