@@ -32,6 +32,8 @@ env:
   LINEAGE_SHA256: f11b259a6569c3bc79ebe78d3ae96ccf8e46a6d33cad9485ac522a1b0e090235
   V11_SHA256: ebca94a408dad408bb4556f8ccf6addb83c7247e3a4ad685086798907194597a
   FIXTURE_RELEASE: PRIVATE test fixtures (draft, never publish)
+  # Google Play upload key (separate from the app signing key): signs only the App Bundle uploaded to Play Console.
+  UPLOAD_CERT_SHA256: d17213e3c596bc603f2c318c0b72f574a3d018264114ae3b448bbe242131fec4
   BUNDLETOOL_VERSION: 1.18.1
   BUNDLETOOL_SHA256: 675786493983787ffa11550bdb7c0715679a44e1643f3ff980a529e9c822595c
   FIXTURES_SHA256: |
@@ -92,6 +94,8 @@ jobs:
         env:
           ZOOMIFY_KEYSTORE_B64: ${{ secrets.ZOOMIFY_KEYSTORE_B64 }}
           ZOOMIFY_KEYSTORE_PASSWORD: ${{ secrets.ZOOMIFY_KEYSTORE_PASSWORD }}
+          ZOOMIFY_UPLOAD_KEYSTORE_B64: ${{ secrets.ZOOMIFY_UPLOAD_KEYSTORE_B64 }}
+          ZOOMIFY_UPLOAD_KEYSTORE_PASSWORD: ${{ secrets.ZOOMIFY_UPLOAD_KEYSTORE_PASSWORD }}
         run: |
           set -euo pipefail
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
@@ -112,10 +116,16 @@ jobs:
           # Test-only: proves a future version signed the same way updates in place. Never published.
           sign "$RUNNER_TEMP/future-unsigned.apk" test-apks/TEST-ONLY-future-update.apk
 
-          # Google Play: the App Bundle is signed (JAR signature) with the release key, which is also the app signing
-          # key the owner uploads to Play App Signing, so Play's APKs carry the same certificate as v1.1.
-          jarsigner -keystore "$KEYDIR/new.p12" -storetype PKCS12 -storepass:env ZOOMIFY_KEYSTORE_PASSWORD \
-            -sigalg SHA256withRSA -digestalg SHA-256 -signedjar Zoomify.aab "$RUNNER_TEMP/release-unsigned.aab" zoomify
+          # Google Play: the App Bundle is signed with the separate UPLOAD key. Play App Signing then re-signs the
+          # APKs it delivers with the app signing key (the release key, imported by the owner with Google's PEPK tool),
+          # so Play's APKs carry the same certificate as v1.1. The release key itself is never uploaded from CI.
+          if [ -n "$ZOOMIFY_UPLOAD_KEYSTORE_B64" ] && [ -n "$ZOOMIFY_UPLOAD_KEYSTORE_PASSWORD" ]; then
+            echo "$ZOOMIFY_UPLOAD_KEYSTORE_B64" | base64 -d > "$KEYDIR/upload.p12"
+            jarsigner -keystore "$KEYDIR/upload.p12" -storetype PKCS12 -storepass:env ZOOMIFY_UPLOAD_KEYSTORE_PASSWORD \
+              -sigalg SHA256withRSA -digestalg SHA-256 -signedjar Zoomify.aab "$RUNNER_TEMP/release-unsigned.aab" upload
+          else
+            echo "::warning::No upload key secrets (ZOOMIFY_UPLOAD_KEYSTORE_*): no Play App Bundle this run."
+          fi
 
           # What Play will deliver: an APK built from this bundle and signed with the app signing key alone, with no
           # rotation proof. bundletool never sees the key: it builds the APK, the SDK's apksigner signs it.
@@ -124,7 +134,7 @@ jobs:
           echo "$BUNDLETOOL_SHA256  $RUNNER_TEMP/bundletool.jar" | sha256sum -c
           keytool -genkeypair -keystore "$RUNNER_TEMP/throwaway.p12" -storetype PKCS12 -storepass throwaway \
             -alias t -keyalg RSA -keysize 2048 -validity 1 -dname CN=throwaway >/dev/null 2>&1
-          java -jar "$RUNNER_TEMP/bundletool.jar" build-apks --bundle=Zoomify.aab --mode=universal \
+          java -jar "$RUNNER_TEMP/bundletool.jar" build-apks --bundle="$RUNNER_TEMP/release-unsigned.aab" --mode=universal \
             --output="$RUNNER_TEMP/universal.apks" --ks="$RUNNER_TEMP/throwaway.p12" --ks-pass=pass:throwaway --ks-key-alias=t
           unzip -o -q "$RUNNER_TEMP/universal.apks" universal.apk -d "$RUNNER_TEMP/universal"
           cp "$RUNNER_TEMP/universal/universal.apk" "$RUNNER_TEMP/play-unsigned.apk"
@@ -176,15 +186,19 @@ jobs:
           }
           check_signing Zoomify.apk release
           check_signing test-apks/TEST-ONLY-future-update.apk future
-          # App Bundle: signed by the release key, same version as the APK.
-          jarsigner -verify Zoomify.aab > signing-report/aab-verify.txt 2>&1 || true
-          grep -q "jar verified" signing-report/aab-verify.txt || { cat signing-report/aab-verify.txt; exit 1; }
-          CERTS=$(keytool -printcert -jarfile Zoomify.aab)
-          AAB_CERT=$(grep -m1 "SHA256:" <<<"$CERTS" | sed 's/.*SHA256: //; s/://g' | tr 'A-F' 'a-f')
-          [ "$AAB_CERT" = "$NEW_CERT_SHA256" ] || { echo "::error::App Bundle isn't signed with the release key ($AAB_CERT)"; exit 1; }
-          java -jar "$RUNNER_TEMP/bundletool.jar" dump manifest --bundle=Zoomify.aab > signing-report/aab-manifest.xml
-          grep -q "android:versionCode=\"${{ steps.meta.outputs.version_code }}\"" signing-report/aab-manifest.xml
-          grep -q 'package="com.zoomify.camera"' signing-report/aab-manifest.xml
+          # App Bundle (if built): signed by the upload key only, never the app signing key; same package and version.
+          if [ -f Zoomify.aab ]; then
+            jarsigner -verify Zoomify.aab > signing-report/aab-verify.txt 2>&1 || true
+            grep -q "jar verified" signing-report/aab-verify.txt || { cat signing-report/aab-verify.txt; exit 1; }
+            CERTS=$(keytool -printcert -jarfile Zoomify.aab)
+            AAB_CERT=$(grep -m1 "SHA256:" <<<"$CERTS" | sed 's/.*SHA256: //; s/://g' | tr 'A-F' 'a-f')
+            [ "$AAB_CERT" = "$UPLOAD_CERT_SHA256" ] || { echo "::error::App Bundle isn't signed with the upload key ($AAB_CERT)"; exit 1; }
+            [ "$(grep -c "SHA256:" <<<"$CERTS")" = 1 ] || { echo "::error::App Bundle has more than one signer"; exit 1; }
+            java -jar "$RUNNER_TEMP/bundletool.jar" dump manifest --bundle=Zoomify.aab > signing-report/aab-manifest.xml
+            grep -q "android:versionCode=\"${{ steps.meta.outputs.version_code }}\"" signing-report/aab-manifest.xml
+            grep -q 'package="com.zoomify.camera"' signing-report/aab-manifest.xml
+            sha256sum Zoomify.aab | tee signing-report/Zoomify.aab.sha256
+          fi
           # Play-style APK: the release key alone (no lineage), same package and version.
           "$BT/apksigner" verify -v --print-certs test-apks/TEST-ONLY-play-style.apk > signing-report/play-style-verify.txt
           grep -q "certificate SHA-256 digest: $NEW_CERT_SHA256" signing-report/play-style-verify.txt
@@ -192,7 +206,6 @@ jobs:
           PLAY_BADGING=$("$BT/aapt2" dump badging test-apks/TEST-ONLY-play-style.apk)
           grep -q "versionCode='${{ steps.meta.outputs.version_code }}'" <<<"$PLAY_BADGING"
           grep -q "package: name='com.zoomify.camera'" <<<"$PLAY_BADGING"
-          sha256sum Zoomify.aab | tee signing-report/Zoomify.aab.sha256
           "$BT/aapt2" dump badging test-apks/TEST-ONLY-future-update.apk > signing-report/future-badging.txt
           grep -q "versionCode='$(( ${{ steps.meta.outputs.version_code }} + 1 ))'" signing-report/future-badging.txt
           "$BT/aapt2" dump badging Zoomify.apk | tee signing-report/badging.txt
@@ -221,6 +234,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Zoomify-play-bundle
+          if-no-files-found: ignore
           path: |
             android/Zoomify.aab
             android/signing-report/Zoomify.aab.sha256
@@ -243,7 +257,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        api-level: [30, 31, 33]   # Android 11, 12, 13
+        api-level: [30, 31, 33, 34, 35, 36]   # Android 11, 12, 13, 14, 15, 16
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
