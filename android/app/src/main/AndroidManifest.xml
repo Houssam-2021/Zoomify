@@ -21,10 +21,16 @@
         android:hardwareAccelerated="true"
         android:largeHeap="true"
         android:icon="@mipmap/ic_launcher"
-        android:label="Zoomify"
+        android:label="Zoomify Cam"
         android:roundIcon="@mipmap/ic_launcher"
         android:supportsRtl="true"
         android:theme="@style/Theme.Zoomify">
+
+        <!-- Android 16 (API 36) ignores portrait-only on large screens (tablets, unfolded foldables). The camera UI is
+             designed for portrait, so it keeps that behaviour where Android 16 still allows it. -->
+        <property
+            android:name="android.window.PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY"
+            android:value="true" />
 
         <activity
             android:name=".MainActivity"

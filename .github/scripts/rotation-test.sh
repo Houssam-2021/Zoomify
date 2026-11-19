@@ -6,9 +6,12 @@
 #      be caused by the signature) must be rejected over the updated app, which must stay untouched.
 #   C. Control: the same attacker APK installs on an empty device, so B's rejection really is the signature check.
 #   D. v1.0 -> this build directly (users who skip 1.1) must also update in place with data kept.
-#   E. This build installs on a clean device and launches.
+#   E. Google Play: an APK built from the App Bundle and signed with the release key alone (as Play App Signing will,
+#      no rotation proof) updates published v1.1 and this build in place, data kept, the compromised key still
+#      rejected afterwards; over v1.0 it is refused (1.0 users install 1.1 from the website first).
+#   F. This build installs on a clean device and launches.
 # Files in test-apks/: zoomify-1.0-legacy.apk, TEST-ONLY-legacy-attacker.apk, Zoomify-v1.1.apk, Zoomify.apk,
-#                      TEST-ONLY-future-update.apk
+#                      TEST-ONLY-future-update.apk, TEST-ONLY-play-style.apk
 set -uo pipefail
 PKG=com.zoomify.camera
 DIR=test-apks
@@ -81,7 +84,28 @@ out=$(install -r "$DIR/TEST-ONLY-legacy-attacker.apk")
 [[ "$out" == *INSTALL_FAILED_UPDATE_INCOMPATIBLE* ]] || fail "attacker APK not rejected after 1.0 -> this build: $out"
 pass "attacker APK also rejected after a direct 1.0 -> this build update"
 
-# E. Clean install + launch
+# E. Google Play update path
+adb uninstall $PKG >/dev/null 2>&1 || true
+[[ $(install "$DIR/Zoomify-v1.1.apk") == *Success* ]] || fail "v1.1 did not install (E)"
+put_marker
+[[ $(install -r "$DIR/TEST-ONLY-play-style.apk") == *Success* ]] || fail "the Play version did not update published v1.1"
+[ "$(vc)" = "$CUR_VC" ] || fail "after the Play update versionCode is $(vc)"
+pass "Play version (release key only, no rotation proof) updated published v1.1 in place"; check_marker "1.1 -> Play version"
+out=$(install -r "$DIR/TEST-ONLY-legacy-attacker.apk")
+[[ "$out" == *INSTALL_FAILED_UPDATE_INCOMPATIBLE* ]] || fail "attacker APK not rejected after the Play update: $out"
+pass "APK signed only with the compromised key is still rejected after the Play update"
+adb uninstall $PKG >/dev/null
+[[ $(install "$DIR/Zoomify.apk") == *Success* ]] || fail "this build did not install (E)"
+put_marker
+[[ $(install -r "$DIR/TEST-ONLY-play-style.apk") == *Success* ]] || fail "the Play version did not update this build"
+pass "Play version updated this website build in place"; check_marker "website build -> Play version"
+adb uninstall $PKG >/dev/null
+[[ $(install "$DIR/zoomify-1.0-legacy.apk") == *Success* ]] || fail "v1.0 did not install (E)"
+out=$(install -r "$DIR/TEST-ONLY-play-style.apk")
+[[ "$out" == *INSTALL_FAILED_UPDATE_INCOMPATIBLE* ]] || fail "unexpected result for 1.0 -> Play version: $out"
+pass "as expected, v1.0 can't update straight to the Play version (1.0 users install 1.1 from the website first)"
+
+# F. Clean install + launch
 adb uninstall $PKG >/dev/null
 [[ $(install "$DIR/Zoomify.apk") == *Success* ]] || fail "this build did not install on a clean device"
 pass "this build installs on a clean device"

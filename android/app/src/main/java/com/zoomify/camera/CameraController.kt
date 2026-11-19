@@ -196,9 +196,53 @@ class CameraController(private val activity: ComponentActivity) {
     private var pendingRotation = -1
     private var pendingSince = 0L
 
+    private val settingsStore = SettingsStore(activity)
+
     init {
         processor.horizonSource = horizonLock::angleAt
+        restoreSettings(settingsStore.load())
     }
+
+    private fun restoreSettings(s: SavedSettings) {
+        mode = s.mode
+        lensFacing = if (s.frontCamera) CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK
+        videoResolution = s.videoResolution
+        bitrate = s.bitrate
+        frameRate = s.frameRate
+        videoPath = s.videoPath
+        videoProfile = s.videoProfile
+        stabilization = s.stabilization
+        gyroStabilizer = s.gyroStabilizer
+        colorLook = s.colorLook
+        lutId = s.lutId?.takeIf { it in LutLibrary.creativeIds }
+        lutTarget = s.lutTarget
+        logViewAssist = s.logViewAssist
+        photoPipeline = s.photoPipeline
+        photoFormat = s.photoFormat
+        previewPerformance = s.previewPerformance
+        sharpening = s.sharpening
+        hardwareAssist = s.hardwareAssist
+        mirrorFront = s.mirrorFront
+        micEnabled = s.micEnabled
+        blurStrength = s.blurStrength
+        smoothness = s.smoothness
+        timerSeconds = s.timerSeconds
+        gridOn = s.gridOn
+    }
+
+    /** Saves every user choice (called on each change and when the app goes to the background). */
+    fun saveSettings() = settingsStore.save(
+        SavedSettings(
+            mode = mode, frontCamera = lensFacing == CameraSelector.LENS_FACING_FRONT,
+            videoResolution = videoResolution, bitrate = bitrate, frameRate = frameRate, videoPath = videoPath,
+            videoProfile = videoProfile, stabilization = stabilization, gyroStabilizer = gyroStabilizer,
+            colorLook = colorLook, lutId = lutId, lutTarget = lutTarget, logViewAssist = logViewAssist,
+            photoPipeline = photoPipeline, photoFormat = photoFormat, previewPerformance = previewPerformance,
+            sharpening = sharpening, hardwareAssist = hardwareAssist, mirrorFront = mirrorFront,
+            micEnabled = micEnabled, blurStrength = blurStrength, smoothness = smoothness,
+            timerSeconds = timerSeconds, gridOn = gridOn,
+        )
+    )
     private val vibrator: Vibrator? = activity.getSystemService(Vibrator::class.java)
 
     private var provider: ProcessCameraProvider? = null
@@ -299,6 +343,7 @@ class CameraController(private val activity: ComponentActivity) {
         zoomAnimator.smoothness = smoothness.toDouble()
         processor.blurStrength = blurStrength
         processor.look = colorLook
+        lutId?.let { processor.setLut(LutLibrary.load(activity, it)) }
         val future = ProcessCameraProvider.getInstance(activity)
         future.addListener({
             try {
@@ -934,6 +979,7 @@ class CameraController(private val activity: ComponentActivity) {
         if (isRecording) return run { toast = "Stop recording first" }
         if (newMode == mode) return
         mode = newMode
+        saveSettings()
         bind(keepZoom = true)
     }
 
@@ -943,16 +989,19 @@ class CameraController(private val activity: ComponentActivity) {
         else CameraSelector.LENS_FACING_BACK
         activeLens = null
         torchOn = false
+        saveSettings()
         bind(keepZoom = false)
     }
 
     fun cycleTimer() {
         timerSeconds = when (timerSeconds) { 0 -> 3; 3 -> 10; else -> 0 }
         toast = if (timerSeconds == 0) "Photo timer off" else "$timerSeconds-second photo timer"
+        saveSettings()
     }
 
     fun toggleGrid() {
         gridOn = !gridOn
+        saveSettings()
     }
 
     fun toggleTorch() {
@@ -993,6 +1042,7 @@ class CameraController(private val activity: ComponentActivity) {
     private inline fun changeAndRebind(block: () -> Unit) {
         if (isRecording) return run { toast = "Stop recording first" }
         block()
+        saveSettings()
         bind(keepZoom = true)
     }
 
@@ -1111,6 +1161,7 @@ class CameraController(private val activity: ComponentActivity) {
 
     fun choosePhotoPipeline(value: PhotoPipeline) {
         photoPipeline = value
+        saveSettings()
     }
 
     fun toggleHardwareAssist() {
@@ -1130,6 +1181,7 @@ class CameraController(private val activity: ComponentActivity) {
 
     fun toggleMic() {
         micEnabled = !micEnabled
+        saveSettings()
     }
 
     // endregion

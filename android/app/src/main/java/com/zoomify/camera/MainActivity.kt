@@ -74,6 +74,7 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         super.onStop()
         controller.stopRecordingIfNeeded()
+        controller.saveSettings()
     }
 
     override fun onDestroy() {
