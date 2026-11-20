@@ -78,7 +78,7 @@ import kotlin.math.roundToInt
 
 data class LastCapture(val uri: Uri, val isVideo: Boolean)
 
-enum class VideoProfile(val label: String) { STANDARD("Standard"), HDR("HDR 10-bit"), LOG("Zoomify Log") }
+enum class VideoProfile(val label: String) { STANDARD("Standard"), HDR("HDR 10-bit"), LOG("MegaCam Log") }
 enum class Stabilization(val label: String) { OFF("Off"), STANDARD("Standard"), HORIZON_LOCK("Horizon lock") }
 enum class LutTarget(val label: String) { PREVIEW("Preview only"), ALL("Preview + captures") }
 
@@ -1079,7 +1079,7 @@ class CameraController(private val activity: ComponentActivity) {
 
     fun copyDiagnostics() {
         val clipboard = activity.getSystemService(android.content.ClipboardManager::class.java)
-        clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("Zoomify diagnostics", fpsDiagnostics))
+        clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("MegaCam diagnostics", fpsDiagnostics))
         toast = "Diagnostics copied"
     }
 
@@ -1093,13 +1093,13 @@ class CameraController(private val activity: ComponentActivity) {
         val expMs = if (resultExposureNs > 0) "%.1f ms".format(Locale.US, resultExposureNs / 1e6) else "?"
         fun named(v: Int?, names: List<String>) = v?.let { names.getOrNull(it) ?: "$it" } ?: "not reported"
         return buildString {
-            appendLine("Zoomify ${versionName} · ${android.os.Build.MODEL} · Android ${android.os.Build.VERSION.RELEASE}")
+            appendLine("MegaCam ${versionName} · ${android.os.Build.MODEL} · Android ${android.os.Build.VERSION.RELEASE}")
             appendLine("Mode: ${mode.name} ${videoResolution.label} ${frameRate} fps selected · path ${effectivePath.label} · stabilisation ${stabilization.label}")
             appendLine("60 fps: ${if (fps60Supported) "offered" else "not offered"} · $fps60Reason")
             appendLine("Requested AE range: $requestedAeText · camera used: $ae")
             appendLine("CameraX ranges for this session: $cameraxRangesText")
             appendLine("Capture (camera) rate: $capture fps · frame duration $frameMs · exposure $expMs")
-            appendLine("Preview drawn: ${if (effectActive) "$preview fps" else "direct (not drawn by Zoomify)"}")
+            appendLine("Preview drawn: ${if (effectActive) "$preview fps" else "direct (not drawn by MegaCam)"}")
             appendLine("Streams: camera→GPU ${processor.inputWidth}×${processor.inputHeight} · output ${size?.let { "${it.width}×${it.height}" } ?: "?"}")
             appendLine("EIS: ${named(resultEis, listOf("off", "on", "preview"))} · OIS: ${named(resultOis, listOf("off", "on"))}" +
                 " · horizon engine: ${if (processor.stabilizer != null) "gyro 3-axis" else if (horizonActive) "level lock" else "off"}")
@@ -1154,7 +1154,7 @@ class CameraController(private val activity: ComponentActivity) {
         ioExecutor.execute {
             val ok = LutLibrary.exportToDownloads(activity, LutLibrary.LOG_LUT_ID)
             mainExecutor.execute {
-                toast = if (ok) "Saved ${LutLibrary.LOG_LUT_ID}.cube to Downloads/Zoomify" else "Couldn't save the LUT"
+                toast = if (ok) "Saved ${LutLibrary.LOG_LUT_ID}.cube to Downloads/MegaCam" else "Couldn't save the LUT"
             }
         }
     }
@@ -1243,7 +1243,7 @@ class CameraController(private val activity: ComponentActivity) {
         flashWhite = true
         activity.lifecycleScope.launch { delay(110); flashWhite = false }
         buzz(20)
-        val name = newName("Zoomify_Photo_")
+        val name = newName("MegaCam_Photo_")
         val digital = currentDigitalZoom
         val metadata = ImageCapture.Metadata().apply {
             isReversedHorizontal = lensFacing == CameraSelector.LENS_FACING_FRONT && mirrorFront
@@ -1309,7 +1309,7 @@ class CameraController(private val activity: ComponentActivity) {
     private fun startRecording() {
         val capture = videoCapture ?: return
         horizonLock.targetRotation = targetRotation
-        val pending = capture.output.prepareRecording(activity, MediaStoreHelper.videoOutputOptions(activity, newName("Zoomify_")))
+        val pending = capture.output.prepareRecording(activity, MediaStoreHelper.videoOutputOptions(activity, newName("MegaCam_")))
         val hasMic = ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
         val withAudio = if (micEnabled && hasMic) pending.withAudioEnabled() else pending

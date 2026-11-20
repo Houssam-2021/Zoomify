@@ -72,7 +72,7 @@ object LutLibrary {
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, "$id.cube")
             put(MediaStore.MediaColumns.MIME_TYPE, "application/octet-stream")
-            put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/Zoomify")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/MegaCam")
         }
         val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
         uri != null && context.contentResolver.openOutputStream(uri)?.use { it.write(bytes); true } == true

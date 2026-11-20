@@ -1,12 +1,13 @@
-# Zoomify Cam privacy policy
+# MegaCam privacy policy
 
 _Last updated: 20 November 2026_
 
-This policy covers the **Zoomify Cam** Android app (package `com.zoomify.camera`), published by Houssam Elissaoui.
+This policy covers the **MegaCam** Android app (formerly Zoomify Cam; package `com.zoomify.camera`), published by
+Houssam Elissaoui.
 
 ## In short
 
-**Zoomify Cam does not collect, store on a server, share or sell any personal data.** The app has no internet
+**MegaCam does not collect, store on a server, share or sell any personal data.** The app has no internet
 permission, no accounts, no ads, no analytics and no tracking.
 
 ## What the app accesses, and why
@@ -22,7 +23,7 @@ readings are used on the phone in real time and are never saved or sent.
 
 ## Your photos and videos
 
-Photos and videos are saved **only on your phone**, in your gallery (the "Zoomify" folder). The app never uploads them.
+Photos and videos are saved **only on your phone**, in your gallery (the "MegaCam" folder; photos taken with earlier versions are in a "Zoomify" folder). The app never uploads them.
 They stay on your phone even if you uninstall the app, and you can delete them at any time from your gallery.
 
 ## Your settings
@@ -33,16 +34,16 @@ managed by Google under your Google account, not by us. Uninstalling the app or 
 
 ## Internet and third parties
 
-Zoomify Cam has **no internet permission**, so it cannot send anything anywhere. It contains no third-party
+MegaCam has **no internet permission**, so it cannot send anything anywhere. It contains no third-party
 advertising, analytics or tracking code.
 
 If you install the app from Google Play, Google may collect information about installs and app crashes as part of
 providing Google Play. That collection is covered by [Google's privacy policy](https://policies.google.com/privacy),
-not by Zoomify Cam.
+not by MegaCam.
 
 ## Children
 
-Zoomify Cam is a general camera app and is not directed at children. It doesn't collect personal data from anyone,
+MegaCam is a general camera app and is not directed at children. It doesn't collect personal data from anyone,
 including children.
 
 ## Changes

@@ -272,7 +272,7 @@ private fun TopBar(controller: CameraController, onSettings: () -> Unit) {
         ) { Text("◉", color = Color.White, fontSize = 19.sp) }
         Spacer(Modifier.width(10.dp))
         Column {
-            Text("ZOOMIFY", color = Color.White, fontSize = 14.sp, letterSpacing = 2.6.sp, fontWeight = FontWeight.SemiBold)
+            Text("MEGACAM", color = Color.White, fontSize = 14.sp, letterSpacing = 2.6.sp, fontWeight = FontWeight.SemiBold)
             Text("CINEMATIC CAMERA", color = Color.White.copy(alpha = 0.6f), fontSize = 8.sp, letterSpacing = 1.sp,
                 fontWeight = FontWeight.SemiBold)
         }

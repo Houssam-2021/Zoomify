@@ -1,4 +1,4 @@
-# Zoomify Cam roadmap
+# MegaCam roadmap (formerly Zoomify Cam)
 
 ## Planned: AdMob ads (when the app becomes popular)
 

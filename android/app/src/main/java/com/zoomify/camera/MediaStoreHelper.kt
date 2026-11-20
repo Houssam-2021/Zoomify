@@ -16,7 +16,7 @@ import java.io.File
 import java.io.FileOutputStream
 
 object MediaStoreHelper {
-    private const val FOLDER = "DCIM/Zoomify"
+    private const val FOLDER = "DCIM/MegaCam"
 
     fun imageOutputOptions(
         context: Context, name: String, mimeType: String, metadata: ImageCapture.Metadata,

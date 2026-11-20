@@ -117,7 +117,7 @@ fun SettingsSheet(c: CameraController, onDismiss: () -> Unit) {
             Choices("Video profile", c.videoProfile.label, VideoProfile.entries, c.videoProfile, { it.label },
                 enabled = { it != VideoProfile.HDR || c.hdrSupported },
                 onSelect = c::chooseVideoProfile,
-                note = if (c.logHardware) "Zoomify Log uses a hardware log tone curve, recorded 1 EV under for highlight headroom. " +
+                note = if (c.logHardware) "MegaCam Log uses a hardware log tone curve, recorded 1 EV under for highlight headroom. " +
                     "HDR records 10-bit HLG (Sensor HQ only)."
                 else "This camera has no custom tone curve, so Log is emulated on the GPU (8-bit, Cinematic path). " +
                     "HDR records 10-bit HLG where supported.")
@@ -142,7 +142,7 @@ fun SettingsSheet(c: CameraController, onDismiss: () -> Unit) {
             if (c.videoProfile == VideoProfile.LOG) {
                 Toggle("Log view assist", "Shows Log converted to Rec.709 in the viewfinder. Recordings stay Log.",
                     c.logViewAssist, c::toggleLogViewAssist)
-                ActionButton("Save Zoomify Log → Rec709 LUT (.cube)", c::exportLogLut)
+                ActionButton("Save MegaCam Log → Rec709 LUT (.cube)", c::exportLogLut)
             }
 
             Section("COLOR")
@@ -167,7 +167,7 @@ fun SettingsSheet(c: CameraController, onDismiss: () -> Unit) {
             Choices("Photo format", c.photoFormat.label, c.availablePhotoFormats, c.photoFormat, { it.label },
                 enabled = { it !in c.unsupportedPhotoFormats },
                 onSelect = c::choosePhotoFormat,
-                note = "RAW saves 16-bit DNG files to DCIM/Zoomify. ${c.rawStatus}")
+                note = "RAW saves 16-bit DNG files to DCIM/MegaCam. ${c.rawStatus}")
 
             Section("CAMERA")
             Choices("Preview performance", c.previewPerformance.label, PreviewPerformance.entries, c.previewPerformance,
