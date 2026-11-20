@@ -23,7 +23,10 @@ The owner plans to add AdMob in a later version. Until then the app has **no ads
 **Accounts and legal**
 - [ ] AdMob account: the owner must be 18+, otherwise a parent or guardian owns the account and receives payments.
 - [ ] `app-ads.txt` on the developer website (the domain listed on Google Play).
-- [ ] Re-check the EU "trader" status in Play Console once the app earns money.
+- [ ] EU "trader" status: declared **Non** for this app on 2026-11-20 (free, not monetised yet). Switch it to **Oui**
+      (Play Console → Contenu de l'application → Statut de professionnel) as soon as money comes in: website AdSense
+      approved and showing ads, or AdMob in the app. First check which contact details Play will show publicly
+      (Paramètres → Compte de développeur).
 
 **Play Console, before publishing the ads version**
 - [ ] Ads declaration: **Yes** (Play shows "Contains ads").
