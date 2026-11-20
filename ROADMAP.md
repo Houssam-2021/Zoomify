@@ -11,6 +11,11 @@ The owner plans to add AdMob in a later version. Until then the app has **no ads
       "no internet permission".
 - [ ] Consent: Google's User Messaging Platform (UMP) consent form for the EEA, UK and Switzerland, shown before
       any ad.
+- [ ] **Teen audience:** the Play target audience includes 13-15 and 16-17 (chosen on 2026-11-20), so Google Play's
+      Families requirements apply to users who count as children in their country. Ads must come from a
+      Play-certified network (AdMob is one) and be suitable for children for those users: set AdMob's child-directed
+      or under-age-of-consent settings (or add a neutral age screen and serve personalised ads only to adults), and
+      follow COPPA and GDPR.
 - [ ] Unobtrusive placement only: never over the shutter, viewfinder or zoom controls, and no accidental taps.
       Consider a banner in settings only, and an optional "remove ads" purchase.
 - [ ] Show the privacy policy and a "privacy options" (consent) entry in the app's settings.
