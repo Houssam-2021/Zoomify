@@ -435,8 +435,8 @@ class CameraController(private val activity: ComponentActivity) {
             mainHasRaw -> "RAW is available on the main camera."
             rawCameraId != null -> "RAW is available on camera $rawCameraId; RAW modes switch to it automatically " +
                 "(zoom is limited to that lens)."
-            else -> "This phone doesn't give RAW to other apps on any camera, so only JPEG, Max res and Ultra HDR " +
-                "can be saved. Many mid-range Galaxy phones work this way."
+            else -> "This phone doesn't give RAW to other apps on any camera, so RAW photos can't be saved here. " +
+                "Many mid-range Galaxy phones work this way."
         }
         val useRawCamera = wantsRaw && !front && !mainHasRaw && rawCameraId != null
         if (useRawCamera) activeLens = null
