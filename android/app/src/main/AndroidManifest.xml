@@ -3,6 +3,9 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-feature android:name="android.hardware.camera.any" android:required="true" />
+    <!-- The portrait-only activity makes Play assume a portrait screen is required, which hides the app from
+         devices that report only landscape (some Chromebooks, Android XR). It works there too, so it's optional. -->
+    <uses-feature android:name="android.hardware.screen.portrait" android:required="false" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.VIBRATE" />
