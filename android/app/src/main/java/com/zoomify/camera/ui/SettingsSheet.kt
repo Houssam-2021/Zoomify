@@ -40,6 +40,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -67,6 +72,20 @@ import kotlin.math.roundToInt
 private val SheetColor = Color(0xFF1C1C21)
 private val Dim = Color.White.copy(alpha = 0.46f)
 
+/**
+ * Stops a fling that reaches the top of the settings list from carrying on into the sheet and closing it.
+ * Only the leftover momentum of a fling is absorbed: dragging the sheet down with a finger still closes it.
+ */
+internal object KeepSheetOpenOnFling : NestedScrollConnection {
+    override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset =
+        if (source == NestedScrollSource.SideEffect) available else Offset.Zero
+
+    // The list itself was flinging (consumed part of the velocity) and hit the top: keep the rest. A flick that
+    // starts with the list already at the top (consumed nothing) still reaches the sheet and closes it.
+    override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity =
+        if (consumed.y != 0f) available else Velocity.Zero
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsSheet(c: CameraController, onDismiss: () -> Unit) {
@@ -78,6 +97,7 @@ fun SettingsSheet(c: CameraController, onDismiss: () -> Unit) {
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = state, containerColor = SheetColor) {
         Column(
             Modifier
+                .nestedScroll(KeepSheetOpenOnFling)
                 .verticalScroll(rememberScrollState())
                 .padding(start = 25.dp, end = 25.dp, bottom = 32.dp)
         ) {

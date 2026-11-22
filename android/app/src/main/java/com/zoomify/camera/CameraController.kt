@@ -263,6 +263,12 @@ class CameraController(private val activity: ComponentActivity) {
     private var lastHardwareZoom = -1f
     private var targetRotation = Surface.ROTATION_0
     @Volatile private var lastPhysicalCameraId: String? = null
+    @Volatile private var resultZoomRatio: Float? = null
+    /** How the phone exposes its back lenses to apps (for diagnostics). */
+    private var lensLayoutText = "not checked yet"
+    /** Physical lenses the camera actually used while recording, in order (for diagnostics). */
+    private val recordingLenses = java.util.Collections.synchronizedList(mutableListOf<String>())
+    private var lastRecordingLenses = "none yet"
 
     // Separate ultra-wide camera (phones that don't put the ultra-wide inside the main logical camera).
     /** Back cameras that aren't fused into the main logical camera: an ultra-wide (< 1x) and/or telephotos (> 1x). */
@@ -287,13 +293,14 @@ class CameraController(private val activity: ComponentActivity) {
             result.get(CaptureResult.SENSOR_FRAME_DURATION)?.let { resultFrameDurationNs = it }
             result.get(CaptureResult.SENSOR_EXPOSURE_TIME)?.let { resultExposureNs = it; gyroStab.exposureNs = it }
             result.get(CaptureResult.SENSOR_ROLLING_SHUTTER_SKEW)?.let { gyroStab.rollingShutterSkewNs = it }
-            result.get(CaptureResult.CONTROL_ZOOM_RATIO)?.let { gyroStab.zoomRatio = it }
+            result.get(CaptureResult.CONTROL_ZOOM_RATIO)?.let { gyroStab.zoomRatio = it; resultZoomRatio = it }
             val eis = result.get(CaptureResult.CONTROL_VIDEO_STABILIZATION_MODE)
             resultEis = eis
             resultOis = result.get(CaptureResult.LENS_OPTICAL_STABILIZATION_MODE)
             // Hardware EIS on (1 = ON, 2 = PREVIEW_STABILIZATION): let it handle small fast shakes.
             horizonLock.cooperativeWithEis = eis == 1 || eis == 2
             val id = result.get(CaptureResult.LOGICAL_MULTI_CAMERA_ACTIVE_PHYSICAL_ID) ?: return
+            if (isRecording && recordingLenses.lastOrNull() != id) recordingLenses += id
             val previous = lastPhysicalCameraId
             if (id != previous) {
                 lastPhysicalCameraId = id
@@ -846,6 +853,20 @@ class CameraController(private val activity: ComponentActivity) {
             }
         }
         separateLenses = listOfNotNull(ultraWide) + teles.sortedBy { it.ratio }
+        lensLayoutText = buildString {
+            append("main camera $mainId (zoom from ${"%.2f".format(Locale.US, mainMin)}×)")
+            val physical = runCatching {
+                activity.getSystemService(android.hardware.camera2.CameraManager::class.java)
+                    .getCameraCharacteristics(mainId).physicalCameraIds
+            }.getOrNull().orEmpty()
+            append(if (physical.isEmpty()) " · no physical lenses listed" else " · physical lenses ${physical.joinToString()}")
+            val others = provider.availableCameraInfos.filter { it.lensFacing == CameraSelector.LENS_FACING_BACK }
+                .mapNotNull { info ->
+                    val id = Camera2CameraInfo.from(info).cameraId
+                    if (id == mainId) null else id + (fovMetric(info)?.let { " (%.2f×)".format(Locale.US, it / mainMetric) } ?: "")
+                }
+            append(if (others.isEmpty()) " · no other back cameras for apps" else " · other back cameras ${others.joinToString()}")
+        }
         teleRatios = (fusedTele + teles.map { it.ratio }).map { (it * 10).roundToInt() / 10f }.distinct().sorted()
     }
 
@@ -1103,6 +1124,8 @@ class CameraController(private val activity: ComponentActivity) {
             appendLine("Streams: camera→GPU ${processor.inputWidth}×${processor.inputHeight} · output ${size?.let { "${it.width}×${it.height}" } ?: "?"}")
             appendLine("EIS: ${named(resultEis, listOf("off", "on", "preview"))} · OIS: ${named(resultOis, listOf("off", "on"))}" +
                 " · horizon engine: ${if (processor.stabilizer != null) "gyro 3-axis" else if (horizonActive) "level lock" else "off"}")
+            appendLine("Lenses: $lensLayoutText")
+            appendLine("Lens now: ${lastPhysicalCameraId ?: "not reported"} · zoom ${resultZoomRatio?.let { "%.2f×".format(Locale.US, it) } ?: "?"} · lenses used in last recording: $lastRecordingLenses")
             append("Last recording: ${lastRecordingFps.ifEmpty { "none yet" }}")
         }
     }
@@ -1314,6 +1337,8 @@ class CameraController(private val activity: ComponentActivity) {
             PackageManager.PERMISSION_GRANTED
         val withAudio = if (micEnabled && hasMic) pending.withAudioEnabled() else pending
         if (micEnabled && !hasMic) toast = "Mic permission unavailable · silent recording"
+        recordingLenses.clear()
+        lastPhysicalCameraId?.let { recordingLenses += it }
         isRecording = true
         recordingStartedAt = SystemClock.elapsedRealtime()
         buzz(25)
@@ -1347,6 +1372,9 @@ class CameraController(private val activity: ComponentActivity) {
     }
 
     private fun stopRecording() {
+        lastRecordingLenses = synchronized(recordingLenses) {
+            if (recordingLenses.isEmpty()) "not reported by this phone" else recordingLenses.joinToString(" → ")
+        }
         recording?.stop()
         recording = null
         isRecording = false
