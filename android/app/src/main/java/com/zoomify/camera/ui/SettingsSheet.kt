@@ -18,6 +18,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.SheetValue
@@ -94,18 +98,28 @@ internal object KeepSheetOpenOnFling : NestedScrollConnection {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsSheet(c: CameraController, onDismiss: () -> Unit) {
-    // Swiping down doesn't close settings (it was too easy to do by accident while scrolling); the ✕ button,
-    // the back gesture and hide() still do, because they don't go through confirmValueChange.
-    val state = rememberModalBottomSheetState(skipPartiallyExpanded = true, confirmValueChange = { it != SheetValue.Hidden })
+    // A swipe down closes settings only when it starts on the top bar (handle + title). Starting on the list it
+    // only scrolls, so scrolling back up can never close the sheet by accident. ✕ and back always close it.
+    val swipeFromTop = remember { mutableStateOf(true) }
+    val state = rememberModalBottomSheetState(
+        skipPartiallyExpanded = true,
+        confirmValueChange = { it != SheetValue.Hidden || swipeFromTop.value },
+    )
+    fun Modifier.marksSwipeStart(fromTop: Boolean) = pointerInput(fromTop) {
+        awaitEachGesture { awaitFirstDown(requireUnconsumed = false); swipeFromTop.value = fromTop }
+    }
     val scope = rememberCoroutineScope()
     val close: () -> Unit = { scope.launch { state.hide() }.invokeOnCompletion { onDismiss() } }
     val context = LocalContext.current
     val lutTitles = remember {
         LutLibrary.creativeIds.associateWith { id -> LutLibrary.load(context, id)?.title ?: id }
     }
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = state, containerColor = SheetColor) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss, sheetState = state, containerColor = SheetColor,
+        dragHandle = { BottomSheetDefaults.DragHandle(Modifier.marksSwipeStart(true)) },
+    ) {
         Row(
-            Modifier.fillMaxWidth().padding(start = 25.dp, end = 16.dp, bottom = 6.dp),
+            Modifier.fillMaxWidth().marksSwipeStart(true).padding(start = 25.dp, end = 16.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
@@ -123,6 +137,7 @@ fun SettingsSheet(c: CameraController, onDismiss: () -> Unit) {
         }
         Column(
             Modifier
+                .marksSwipeStart(false)
                 .nestedScroll(KeepSheetOpenOnFling)
                 .verticalScroll(rememberScrollState())
                 .padding(start = 25.dp, end = 25.dp, bottom = 32.dp)

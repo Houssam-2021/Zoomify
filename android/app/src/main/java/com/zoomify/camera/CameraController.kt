@@ -285,6 +285,7 @@ class CameraController(private val activity: ComponentActivity) {
         val camera2Fps60: Boolean, val measuredBelow60: Boolean,
     )
     private var lastSession: SessionArgs? = null
+    private var lensLockNoticeShown = false
     private var mainMinZoom = 1f
     private var lensHopInProgress = false
 
@@ -307,7 +308,7 @@ class CameraController(private val activity: ComponentActivity) {
             // Hardware EIS on (1 = ON, 2 = PREVIEW_STABILIZATION): let it handle small fast shakes.
             horizonLock.cooperativeWithEis = eis == 1 || eis == 2
             val id = result.get(CaptureResult.LOGICAL_MULTI_CAMERA_ACTIVE_PHYSICAL_ID) ?: return
-            if (isRecording && recordingLenses.lastOrNull() != id) recordingLenses += id
+            if (isRecording && recordingLenses.lastOrNull() != "lens $id") recordingLenses += "lens $id"
             val previous = lastPhysicalCameraId
             if (id != previous) {
                 lastPhysicalCameraId = id
@@ -878,6 +879,15 @@ class CameraController(private val activity: ComponentActivity) {
                     if (id == mainId) null else id + (fovMetric(info)?.let { " (%.2f×)".format(Locale.US, it / mainMetric) } ?: "")
                 }
             append(if (others.isEmpty()) " · no other back cameras for apps" else " · other back cameras ${others.joinToString()}")
+            val clocks = runCatching {
+                val manager = activity.getSystemService(android.hardware.camera2.CameraManager::class.java)
+                (listOf(mainId) + provider.availableCameraInfos.filter { it.lensFacing == CameraSelector.LENS_FACING_BACK }
+                    .map { Camera2CameraInfo.from(it).cameraId }).distinct().joinToString { id ->
+                    val src = manager.getCameraCharacteristics(id).get(CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE)
+                    "$id " + if (src == CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME) "realtime" else "uptime"
+                }
+            }.getOrNull()
+            if (clocks != null) append(" · frame clocks $clocks")
         }
         teleRatios = (fusedTele + teles.map { it.ratio }).map { (it * 10).roundToInt() / 10f }.distinct().sorted()
     }
@@ -968,7 +978,19 @@ class CameraController(private val activity: ComponentActivity) {
         if (separateLenses.isEmpty() || lensHopInProgress || !hardwareAssist) return
         val next = lensFor(zoomAnimator.targetZoom)
         if (next == activeLens) return
-        if (isRecording) return hopDuringRecording(next)
+        if (isRecording) {
+            // Only the Cinematic path draws the video itself, so only there can the frame clock be kept continuous
+            // across cameras; on the direct paths a mid-recording switch would freeze the video.
+            val effectOnVideo = ((lastSession?.effectTargets ?: 0) and CameraEffect.VIDEO_CAPTURE) != 0
+            if (!effectOnVideo) {
+                if (!lensLockNoticeShown) {
+                    lensLockNoticeShown = true
+                    toast = "Lens switching while recording needs the Cinematic video path"
+                }
+                return
+            }
+            return hopDuringRecording(next)
+        }
         lensHopInProgress = true
         freezeFrame = previewView.bitmap
         activeLens = next
@@ -1015,6 +1037,7 @@ class CameraController(private val activity: ComponentActivity) {
                 toast = "This lens can't be switched to while recording"
             }
             if (camera != null) {
+                recordingLenses += "camera " + (activeLens?.id ?: "main")
                 onCameraBound(camera, keepZoom = true, previousZoom = keepZoom)
                 val startFrames = processor.previewFrames
                 val started = SystemClock.elapsedRealtime()
@@ -1181,6 +1204,7 @@ class CameraController(private val activity: ComponentActivity) {
             appendLine("EIS: ${named(resultEis, listOf("off", "on", "preview"))} · OIS: ${named(resultOis, listOf("off", "on"))}" +
                 " · horizon engine: ${if (processor.stabilizer != null) "gyro 3-axis" else if (horizonActive) "level lock" else "off"}")
             appendLine("Lenses: $lensLayoutText")
+            appendLine("Video frames drawn: ${processor.videoFrames} · clock jump at last lens switch: ${processor.lastVideoClockJumpMs?.let { "$it ms (corrected)" } ?: "none"}")
             appendLine("Lens now: ${lastPhysicalCameraId ?: "not reported"} · zoom ${resultZoomRatio?.let { "%.2f×".format(Locale.US, it) } ?: "?"} · lenses used in last recording: $lastRecordingLenses")
             append("Last recording: ${lastRecordingFps.ifEmpty { "none yet" }}")
         }
@@ -1396,8 +1420,10 @@ class CameraController(private val activity: ComponentActivity) {
         val persistent = pending.asPersistentRecording()
         val withAudio = if (micEnabled && hasMic) persistent.withAudioEnabled() else persistent
         if (micEnabled && !hasMic) toast = "Mic permission unavailable · silent recording"
+        processor.resetVideoClock()
+        lensLockNoticeShown = false
         recordingLenses.clear()
-        lastPhysicalCameraId?.let { recordingLenses += it }
+        recordingLenses += "camera " + (activeLens?.id ?: "main")
         isRecording = true
         recordingStartedAt = SystemClock.elapsedRealtime()
         buzz(25)

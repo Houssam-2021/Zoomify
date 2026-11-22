@@ -111,6 +111,39 @@ class ZoomBlurProcessor : SurfaceProcessor {
     @Volatile var previewFrames = 0L
         private set
 
+    /** Video frames sent to the recorder, and the clock jump (ms) seen at the last lens switch, for diagnostics. */
+    @Volatile var videoFrames = 0L
+    @Volatile var lastVideoClockJumpMs: Long? = null
+    private var videoTsOffset = 0L
+    private var lastVideoTs = -1L
+    private var lastVideoWallNs = 0L
+
+    /**
+     * Each camera can stamp its frames with a different clock. When the lens changes during a recording the
+     * timestamps would jump (often by hours, or backwards) and the encoder drops every frame after it, freezing the
+     * video. Video timestamps are therefore kept continuous: a jump is replaced by the real time that passed.
+     * Called when a recording starts, so each recording begins on the camera's own clock.
+     */
+    fun resetVideoClock() {
+        executor.execute { videoTsOffset = 0L; lastVideoTs = -1L; videoFrames = 0L; lastVideoClockJumpMs = null }
+    }
+
+    private fun continuousVideoTimestamp(timestamp: Long): Long {
+        val wall = System.nanoTime()
+        var out = timestamp + videoTsOffset
+        if (lastVideoTs >= 0) {
+            val expected = lastVideoTs + (wall - lastVideoWallNs)
+            if (out <= lastVideoTs || abs(out - expected) > 250_000_000L) {
+                lastVideoClockJumpMs = (out - expected) / 1_000_000
+                videoTsOffset += expected - out
+                out = expected
+            }
+        }
+        lastVideoTs = out
+        lastVideoWallNs = wall
+        return out
+    }
+
     // GL-thread state.
     private val stabMatrix = FloatArray(16)
     private var blur = 0f
@@ -282,8 +315,9 @@ class ZoomBlurProcessor : SurfaceProcessor {
                 val grade = videoGrade
                 GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
                 drawCamera(target.width, target.height, digital, blur * grade.blurScale, grade, 0f, seed, dummyTexture, angle, warp)
-                EGLExt.eglPresentationTimeANDROID(display, target.surface, timestamp)
+                EGLExt.eglPresentationTimeANDROID(display, target.surface, continuousVideoTimestamp(timestamp))
                 EGL14.eglSwapBuffers(display, target.surface)
+                videoFrames++
             }
         }
     }
