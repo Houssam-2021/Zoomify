@@ -46,6 +46,8 @@ for page in / /help /privacy /contact /beta /404.html; do
 done
 for href in $(curl -sS -L "$BASE/" "$BASE/help" "$BASE/privacy" "$BASE/contact" "$BASE/beta" | grep -oE 'href="https://[^"]+' | sed 's/href="//' | sort -u); do
   c=$(curl -sS -L -o /dev/null -w '%{http_code}' -A "Mozilla/5.0" "$href"); echo "$c $href"
+  # The Play listing only opens for testers until MegaCam is public, so a 404 there is expected.
+  [[ "$href" == https://play.google.com/store/apps/details?id=com.zoomify.camera && "$c" == 404 ]] && { echo "  (expected until public launch)"; continue; }
   [[ "$c" =~ ^(200|403|429)$ ]] || { echo "BROKEN external $href ($c)"; ok=0; }
 done
 [ $ok = 1 ] && echo "SITE CHECK PASSED: $BASE" || { echo "SITE CHECK FAILED: $BASE"; exit 1; }
