@@ -997,7 +997,7 @@ class CameraController(private val activity: ComponentActivity) {
         lensHopInProgress = true
         freezeFrame = previewView.bitmap
         activity.lifecycleScope.launch {
-            fun selectorFor(lens: SeparateLens?) = if (lens == null) (if (front) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA) else CameraSelector.Builder()
+            fun selectorFor(lens: SeparateLens?) = if (lens == null) (if (lensFacing == CameraSelector.LENS_FACING_FRONT) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA) else CameraSelector.Builder()
                 .addCameraFilter { infos -> infos.filter { Camera2CameraInfo.from(it).cameraId == lens.id } }.build()
             fun bindTo(lens: SeparateLens?): Camera? = runCatching {
                 val selector = selectorFor(lens)
