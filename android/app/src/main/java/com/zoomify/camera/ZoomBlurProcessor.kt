@@ -71,7 +71,10 @@ class ZoomBlurProcessor : SurfaceProcessor {
     private val textureMatrix = FloatArray(16)
     private val outputMatrix = FloatArray(16)
 
-    private class Target(val surface: EGLSurface, val isPreview: Boolean, val width: Int, val height: Int) {
+    private class Target(
+        val surface: EGLSurface, val isPreview: Boolean, val width: Int, val height: Int,
+        val window: android.view.Surface? = null,
+    ) {
         val framebuffers = IntArray(2)
         val textures = IntArray(2)
         var index = 0
@@ -216,6 +219,10 @@ class ZoomBlurProcessor : SurfaceProcessor {
         val surface = surfaceOutput.getSurface(executor) { event ->
             if (event.eventCode == SurfaceOutput.Event.EVENT_REQUEST_CLOSE) removeOutput(surfaceOutput)
         }
+        // A lens switch during a recording rebinds the camera while the recorder keeps the same input surface. If
+        // the previous output for that surface hasn't been closed yet, release it first: a window surface can only
+        // have one EGL surface at a time.
+        outputs.entries.filter { it.value.window === surface }.map { it.key }.forEach(::removeOutput)
         val eglSurface = EGL14.eglCreateWindowSurface(display, config, surface, intArrayOf(EGL14.EGL_NONE), 0)
         if (eglSurface == null || eglSurface == EGL14.EGL_NO_SURFACE) {
             Log.e(TAG, "Could not create an EGL surface for ${surfaceOutput.size}")
@@ -223,7 +230,7 @@ class ZoomBlurProcessor : SurfaceProcessor {
             return
         }
         val isPreview = (surfaceOutput.targets and CameraEffect.PREVIEW) != 0
-        outputs[surfaceOutput] = Target(eglSurface, isPreview, surfaceOutput.size.width, surfaceOutput.size.height)
+        outputs[surfaceOutput] = Target(eglSurface, isPreview, surfaceOutput.size.width, surfaceOutput.size.height, surface)
     }
 
     // endregion

@@ -278,6 +278,13 @@ class CameraController(private val activity: ComponentActivity) {
     private var teleRatios: List<Float> = emptyList()
     /** The separate lens currently bound, or null for the main camera. */
     private var activeLens: SeparateLens? = null
+
+    /** What the current camera session was bound with, so a lens switch during a recording can rebind the same use cases. */
+    private class SessionArgs(
+        val useCases: List<UseCase>, val effectTargets: Int?, val wantFps: Int?, val forceRange: Range<Int>?,
+        val camera2Fps60: Boolean, val measuredBelow60: Boolean,
+    )
+    private var lastSession: SessionArgs? = null
     private var mainMinZoom = 1f
     private var lensHopInProgress = false
 
@@ -604,10 +611,15 @@ class CameraController(private val activity: ComponentActivity) {
         }
 
         val wantFps = if (isVideo) frameRate else null
+        var boundTargets = effectTargets
         val bound = bindSession(provider, selector, cameraInfo, useCases, effectTargets, wantFps, forceRange, camera2Fps60, measuredBelow60)
             ?: if (effectTargets != null) {
+                boundTargets = null
                 bindSession(provider, selector, cameraInfo, useCases, null, wantFps, forceRange, camera2Fps60, measuredBelow60)
             } else null
+        lastSession = if (bound != null) {
+            SessionArgs(useCases.toList(), boundTargets, wantFps, forceRange, camera2Fps60, measuredBelow60)
+        } else null
         if (isVideo) {
             fps60Reason = when {
                 measuredBelow60 -> "60 fps was tried here but the camera delivered fewer frames, so it's off for this combination."
@@ -953,9 +965,10 @@ class CameraController(private val activity: ComponentActivity) {
      * native zoom. The jump is hidden behind a blurred freeze-frame that cross-fades into the new lens.
      */
     private fun maybeHopLens() {
-        if (separateLenses.isEmpty() || lensHopInProgress || isRecording || !hardwareAssist) return
+        if (separateLenses.isEmpty() || lensHopInProgress || !hardwareAssist) return
         val next = lensFor(zoomAnimator.targetZoom)
         if (next == activeLens) return
+        if (isRecording) return hopDuringRecording(next)
         lensHopInProgress = true
         freezeFrame = previewView.bitmap
         activeLens = next
@@ -964,6 +977,49 @@ class CameraController(private val activity: ComponentActivity) {
             val startFrames = processor.previewFrames
             val started = SystemClock.elapsedRealtime()
             while (processor.previewFrames < startFrames + 2 && SystemClock.elapsedRealtime() - started < 1500) delay(16)
+            lensHopInProgress = false
+            lastHardwareZoom = -1f
+            onZoomFrame(zoomUi.zoom, 0f)
+            freezeFrame = null
+        }
+    }
+
+    /**
+     * Switches lens while recording. The recording is persistent, so it carries on while the same preview and
+     * video use cases are rebound to the other camera; the preview shows the blurred freeze-frame meanwhile.
+     * If the other lens can't be bound, the previous one is rebound so the recording keeps going.
+     */
+    private fun hopDuringRecording(next: SeparateLens?) {
+        val provider = provider ?: return
+        val args = lastSession ?: return
+        val previous = activeLens
+        val keepZoom = zoomAnimator.targetZoom
+        lensHopInProgress = true
+        freezeFrame = previewView.bitmap
+        activity.lifecycleScope.launch {
+            fun selectorFor(lens: SeparateLens?) = if (lens == null) mainSelector else CameraSelector.Builder()
+                .addCameraFilter { infos -> infos.filter { Camera2CameraInfo.from(it).cameraId == lens.id } }.build()
+            fun bindTo(lens: SeparateLens?): Camera? = runCatching {
+                val selector = selectorFor(lens)
+                bindSession(
+                    provider, selector, provider.getCameraInfo(selector), args.useCases, args.effectTargets,
+                    args.wantFps, args.forceRange, args.camera2Fps60, args.measuredBelow60,
+                )
+            }.getOrNull()
+            activeLens = next
+            var camera = bindTo(next)
+            if (camera == null) {
+                Log.w("Zoomify", "Lens switch during recording failed; staying on the previous lens")
+                activeLens = previous
+                camera = bindTo(previous)
+                toast = "This lens can't be switched to while recording"
+            }
+            if (camera != null) {
+                onCameraBound(camera, keepZoom = true, previousZoom = keepZoom)
+                val startFrames = processor.previewFrames
+                val started = SystemClock.elapsedRealtime()
+                while (processor.previewFrames < startFrames + 2 && SystemClock.elapsedRealtime() - started < 1500) delay(16)
+            }
             lensHopInProgress = false
             lastHardwareZoom = -1f
             onZoomFrame(zoomUi.zoom, 0f)
@@ -1329,13 +1385,16 @@ class CameraController(private val activity: ComponentActivity) {
     }
 
     @SuppressLint("MissingPermission")
+    @kotlin.OptIn(androidx.camera.video.ExperimentalPersistentRecording::class)
     private fun startRecording() {
         val capture = videoCapture ?: return
         horizonLock.targetRotation = targetRotation
         val pending = capture.output.prepareRecording(activity, MediaStoreHelper.videoOutputOptions(activity, newName("MegaCam_")))
         val hasMic = ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
-        val withAudio = if (micEnabled && hasMic) pending.withAudioEnabled() else pending
+        // Persistent: the recording survives the camera being rebound, which is how lenses are switched mid-recording.
+        val persistent = pending.asPersistentRecording()
+        val withAudio = if (micEnabled && hasMic) persistent.withAudioEnabled() else persistent
         if (micEnabled && !hasMic) toast = "Mic permission unavailable · silent recording"
         recordingLenses.clear()
         lastPhysicalCameraId?.let { recordingLenses += it }

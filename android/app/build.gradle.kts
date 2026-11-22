@@ -7,7 +7,7 @@ plugins {
 }
 
 // Bump for every release. CI can override it for test-only builds (-PzoomifyTestVersionCode=N); those are never published.
-val zoomifyVersionCode = 8
+val zoomifyVersionCode = 9
 
 android {
     namespace = "com.zoomify.camera"
@@ -18,7 +18,7 @@ android {
         minSdk = 30          // Android 11: CONTROL_ZOOM_RATIO, i.e. seamless 0.5x <-> 1x on multi-lens phones
         targetSdk = 36
         versionCode = (project.findProperty("zoomifyTestVersionCode") as String?)?.toInt() ?: zoomifyVersionCode
-        versionName = "1.2-beta.6"
+        versionName = "1.2-beta.7"
     }
 
     buildTypes {
