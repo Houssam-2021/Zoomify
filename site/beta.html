@@ -9,46 +9,43 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='17' fill='%23141318'/%3E%3Ccircle cx='32' cy='32' r='14' fill='none' stroke='%23f4ca70' stroke-width='3'/%3E%3Ccircle cx='32' cy='32' r='6' fill='%23f4ca70'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/assets/pages.css">
 <style>
-.beta-hero{display:flex;gap:18px;align-items:center;margin-bottom:6px}
-.beta-icon{flex:none;width:64px;height:64px;border-radius:16px;background:#0d0d0f;display:grid;place-items:center;border:1px solid var(--line)}
-.steps{display:grid;gap:16px;margin:28px 0 8px}
-.step{display:flex;gap:16px;align-items:flex-start;background:var(--surface);border:1px solid var(--line);border-radius:22px;padding:22px}
-.step-n{flex:none;width:44px;height:44px;border-radius:50%;background:var(--gold);color:#090a0f;font-weight:800;font-size:20px;display:grid;place-items:center}
-.step h2{margin:2px 0 4px;font-size:22px}
-.step p{margin:0 0 14px;color:var(--muted);font-size:15px;line-height:1.6}
-.step .en{display:block;font-size:13px;color:#8c8a95;margin-top:2px}
-.big{display:flex;justify-content:center;align-items:center;gap:8px;width:100%;max-width:420px;background:var(--gold);color:#121217;text-decoration:none;font-weight:800;font-size:17px;border-radius:16px;padding:16px 20px}
+main{padding-top:22px}
+.beta-hero{display:flex;gap:14px;align-items:center}
+.beta-icon{flex:none;width:52px;height:52px;border-radius:14px;background:#0d0d0f;display:grid;place-items:center;border:1px solid var(--line)}
+.beta-hero h1{font-size:clamp(28px,7.4vw,46px);margin:4px 0 0;line-height:1.05}
+.lead{font-size:15px;margin:12px 0 4px}
+.need{font-size:13px;color:var(--muted);margin:0 0 14px}
+.steps{display:grid;gap:10px}
+.step{display:grid;grid-template-columns:36px 1fr;gap:4px 12px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:14px 16px}
+.step-n{width:36px;height:36px;border-radius:50%;background:var(--gold);color:#090a0f;font-weight:800;font-size:17px;display:grid;place-items:center}
+.step h2{margin:0;font-size:18px;line-height:1.25}
+.step p{grid-column:2;margin:0;color:var(--muted);font-size:13.5px;line-height:1.5}
+.big{grid-column:1/-1;margin-top:8px;display:flex;justify-content:center;align-items:center;gap:8px;background:var(--gold);color:#121217;text-decoration:none;font-weight:800;font-size:16px;border-radius:14px;padding:13px 18px}
 .big:hover{background:var(--gold-soft);color:#121217}
-.need{font-size:14px;color:var(--muted)}
+.faq-title{margin-top:40px}
+@media(max-width:560px){.nav{flex-direction:row!important;align-items:center!important;padding:12px 0!important}.nav-links{display:none}main{padding-top:16px!important}}
+@media(min-width:700px){.steps{grid-template-columns:repeat(3,1fr)}.step{align-content:start}}
 </style>
 </head>
 <body>
 <header class="site-header"><nav class="nav container" aria-label="Main navigation"><a class="brand" href="/" aria-label="Zoomify home"><svg class="brand-symbol" viewBox="0 0 44 44" fill="none" aria-hidden="true"><circle cx="22" cy="22" r="19.4" stroke="currentColor" stroke-width="2.4" opacity=".45"/><path d="M22 4a18 18 0 0 1 16 9l-9.6 1.3-5.9 9.1L22 4Z" fill="currentColor"/><path d="M40 22a18 18 0 0 1-9 16l-1.3-9.6-9.1-5.9L40 22Z" fill="currentColor" opacity=".88"/><path d="M22 40a18 18 0 0 1-16-9l9.6-1.3 5.9-9.1L22 40Z" fill="currentColor" opacity=".78"/><path d="M4 22a18 18 0 0 1 9-16l1.3 9.6 9.1 5.9L4 22Z" fill="currentColor" opacity=".68"/><circle cx="22" cy="22" r="5.9" fill="#101016" stroke="currentColor" stroke-width="1.8"/></svg><span>zoomify<span class="brand-dot">.</span></span></a><div class="nav-links"><a href="/">Home</a><a href="/help">Help</a><a href="/privacy">Privacy</a><a href="/contact">Contact</a><a href="https://github.com/Houssam-2021/Zoomify" rel="noopener noreferrer">GitHub ↗</a></div></nav></header>
 <main class="container">
-  <div class="beta-hero"><div class="beta-icon" aria-hidden="true"><svg width="40" height="40" viewBox="0 0 40 40"><circle cx="20" cy="20" r="16" fill="none" stroke="#fff" stroke-width="3.5"/><circle cx="20" cy="20" r="9" fill="#f5cc0a"/><circle cx="20" cy="20" r="4" fill="#0d0d0f"/></svg></div>
-  <div class="kicker">🧪 Google Play beta</div></div>
-  <h1>Try <em>MegaCam</em> before everyone else</h1>
-  <p class="lead">Zoomify is coming to Google Play as MegaCam. It's free and takes 1 minute.</p>
-  <p class="need">📱 Android 11 or newer · use the <b>same Google account</b> as your phone's Play Store.</p>
+  <div class="beta-hero"><div class="beta-icon" aria-hidden="true"><svg width="32" height="32" viewBox="0 0 40 40"><circle cx="20" cy="20" r="16" fill="none" stroke="#fff" stroke-width="3.5"/><circle cx="20" cy="20" r="9" fill="#f5cc0a"/><circle cx="20" cy="20" r="4" fill="#0d0d0f"/></svg></div>
+  <div><div class="kicker">🧪 Google Play beta · free</div><h1>Try <em>MegaCam</em> first</h1></div></div>
+  <p class="lead">Zoomify is coming to Google Play as MegaCam. 3 quick steps:</p>
+  <p class="need">📱 Android 11+ · use the <b>same Google account</b> as your Play Store.</p>
 
   <div class="steps">
-    <div class="step"><div class="step-n">1</div><div>
-      <h2>Join the testers group</h2>
-      <p>Tap the button, then tap "Join group".</p>
-      <a class="big" href="https://groups.google.com/g/megacam-testers" rel="noopener noreferrer">Join the group ↗</a>
-    </div></div>
-    <div class="step"><div class="step-n">2</div><div>
-      <h2>Become a tester &amp; install</h2>
-      <p>Tap "Become a tester", then the Google Play link, and install MegaCam.</p>
-      <a class="big" href="https://play.google.com/apps/testing/com.zoomify.camera" rel="noopener noreferrer">Become a tester ↗</a>
-    </div></div>
-    <div class="step"><div class="step-n">3</div><div>
-      <h2>Keep it for 14 days 🙏</h2>
-      <p style="margin:0">Please don't uninstall it for at least 14 days: that's what lets the app launch publicly on Google Play. And tell me what you think!</p>
-    </div></div>
+    <div class="step"><div class="step-n">1</div><h2>Join the testers group</h2>
+      <a class="big" href="https://groups.google.com/g/megacam-testers" rel="noopener noreferrer">Join the group ↗</a></div>
+    <div class="step"><div class="step-n">2</div><h2>Become a tester &amp; install</h2>
+      <a class="big" href="https://play.google.com/apps/testing/com.zoomify.camera" rel="noopener noreferrer">Become a tester ↗</a></div>
+    <div class="step"><div class="step-n">3</div><h2>Keep it for 14 days 🙏</h2>
+      <p>It's what lets MegaCam launch publicly. Tell me what you think!</p></div>
   </div>
 
-  <h2>Questions</h2>
+  <h2 class="faq-title">Questions</h2>
+  <details><summary>How exactly do I do steps 1 and 2?</summary><p><b>Step 1:</b> tap "Join the group", then "Join group" on the Google Groups page. <b>Step 2:</b> tap "Become a tester", then the "download it on Google Play" link, and install MegaCam.</p></details>
   <details><summary>Google Play says "Item not found"</summary><p>Check that your Play Store account is the same one you joined the group with (profile picture at the top right of the Play Store). After joining, wait a few minutes and try step 2 again.</p></details>
   <details><summary>I already have Zoomify from this site</summary><p>Uninstall Zoomify first, then install MegaCam from Google Play. Your photos stay in your gallery.</p></details>
   <details><summary>How do I give feedback?</summary><p>On MegaCam's Play Store page, use "Send private feedback to developer" (only the developer sees it). Or comment or message on TikTok <a href="https://www.tiktok.com/@mituhype" rel="noopener noreferrer">@mituhype</a>.</p></details>
