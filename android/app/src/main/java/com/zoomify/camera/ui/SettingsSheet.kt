@@ -18,6 +18,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.SheetValue
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -89,19 +94,39 @@ internal object KeepSheetOpenOnFling : NestedScrollConnection {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsSheet(c: CameraController, onDismiss: () -> Unit) {
-    val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    // Swiping down doesn't close settings (it was too easy to do by accident while scrolling); the ✕ button,
+    // the back gesture and hide() still do, because they don't go through confirmValueChange.
+    val state = rememberModalBottomSheetState(skipPartiallyExpanded = true, confirmValueChange = { it != SheetValue.Hidden })
+    val scope = rememberCoroutineScope()
+    val close: () -> Unit = { scope.launch { state.hide() }.invokeOnCompletion { onDismiss() } }
     val context = LocalContext.current
     val lutTitles = remember {
         LutLibrary.creativeIds.associateWith { id -> LutLibrary.load(context, id)?.title ?: id }
     }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = state, containerColor = SheetColor) {
+        Row(
+            Modifier.fillMaxWidth().padding(start = 25.dp, end = 16.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "Cinematic controls", color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+            )
+            Box(
+                Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.12f))
+                    .clickable(onClickLabel = "Close settings", onClick = close),
+                contentAlignment = Alignment.Center,
+            ) { Text("✕", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold) }
+        }
         Column(
             Modifier
                 .nestedScroll(KeepSheetOpenOnFling)
                 .verticalScroll(rememberScrollState())
                 .padding(start = 25.dp, end = 25.dp, bottom = 32.dp)
         ) {
-            Text("Cinematic controls", color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.SemiBold)
 
             SliderSetting(
                 "Motion blur strength", "${(c.blurStrength * 100).roundToInt()}%", c.blurStrength, 0f..1f,
