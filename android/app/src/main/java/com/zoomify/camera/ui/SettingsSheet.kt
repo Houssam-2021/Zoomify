@@ -45,9 +45,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -81,9 +79,8 @@ private val Dim = Color.White.copy(alpha = 0.46f)
  * Only the leftover momentum of a fling is absorbed: dragging the sheet down with a finger still closes it.
  */
 internal object KeepSheetOpenOnFling : NestedScrollConnection {
-    override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset =
-        if (source == NestedScrollSource.SideEffect) available else Offset.Zero
-
+    // Don't consume the fling's own scroll steps: that kept an invisible fling running for ~2 s before a swipe
+    // down could close the sheet. The sheet only moves for finger drags anyway; what closed it was the velocity.
     // The list itself was flinging (consumed part of the velocity) and hit the top: keep the rest. A flick that
     // starts with the list already at the top (consumed nothing) still reaches the sheet and closes it.
     override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity =
