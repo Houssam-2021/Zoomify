@@ -111,6 +111,32 @@ class ZoomBlurProcessor : SurfaceProcessor {
     @Volatile var previewFrames = 0L
         private set
 
+    /**
+     * Motion-blur samples per pixel (4–8), adapted to how long frames take to draw: a strong blur spreads its taps
+     * far apart, which is slow on big (4K) outputs, so the count drops when a frame overruns its time budget and
+     * climbs back when there's headroom. The per-pixel jitter keeps fewer taps looking smooth. For diagnostics too.
+     */
+    @Volatile var blurTaps = 8
+        private set
+    private var drawCostNs = 0.0
+    private var frameIntervalNs = 33_333_333.0
+    private var lastFrameTimestamp = 0L
+    private var framesSinceTapChange = 0
+
+    private fun adaptBlurTaps(costNs: Long, timestamp: Long) {
+        if (lastFrameTimestamp > 0L) {
+            val dt = (timestamp - lastFrameTimestamp).toDouble()
+            if (dt in 5e6..2e8) frameIntervalNs += (dt - frameIntervalNs) * 0.05
+        }
+        lastFrameTimestamp = timestamp
+        if (blur <= 0f) return   // only frames that actually blur say anything about the blur's cost
+        drawCostNs += (costNs - drawCostNs) * 0.2
+        if (++framesSinceTapChange < 8) return
+        val budget = frameIntervalNs * 0.75
+        if (drawCostNs > budget && blurTaps > 4) { blurTaps--; framesSinceTapChange = 0 }
+        else if (drawCostNs < budget * 0.45 && blurTaps < 8) { blurTaps++; framesSinceTapChange = 0 }
+    }
+
     /** Video frames sent to the recorder, and the clock jump (ms) seen at the last lens switch, for diagnostics. */
     @Volatile var videoFrames = 0L
     @Volatile var lastVideoClockJumpMs: Long? = null
@@ -302,6 +328,7 @@ class ZoomBlurProcessor : SurfaceProcessor {
         val texDet = det2(textureMatrix)
         val warp = stabilizerWarp(timestamp, digital)
 
+        val drawStart = System.nanoTime()
         for ((output, target) in outputs) {
             output.updateTransformMatrix(outputMatrix, textureMatrix)
             if (!EGL14.eglMakeCurrent(display, target.surface, target.surface, context)) continue
@@ -320,6 +347,7 @@ class ZoomBlurProcessor : SurfaceProcessor {
                 videoFrames++
             }
         }
+        adaptBlurTaps(System.nanoTime() - drawStart, timestamp)
     }
 
     /** Determinant of the 2D (upper-left) part of a column-major 4x4 matrix. */
@@ -393,6 +421,7 @@ class ZoomBlurProcessor : SurfaceProcessor {
         GLES20.glUniformMatrix4fv(uniform(p, "uTexMatrix"), 1, false, outputMatrix, 0)
         GLES20.glUniform1f(uniform(p, "uDigitalZoom"), maxOf(1f, digital))
         GLES20.glUniform1f(uniform(p, "uBlur"), blur)
+        GLES20.glUniform1f(uniform(p, "uTaps"), blurTaps.toFloat())
         GLES20.glUniform1f(uniform(p, "uHistoryMix"), historyMix)
         GLES20.glUniform1f(uniform(p, "uSeed"), seed)
         GLES20.glUniform1f(uniform(p, "uTransform"), grade.transform.toFloat())
@@ -560,6 +589,7 @@ uniform float uDigitalZoom;
 uniform float uBlur;
 uniform float uHistoryMix;
 uniform float uSeed;
+uniform float uTaps;
 uniform float uTransform;
 uniform float uSaturation;
 uniform float uShaped;
@@ -637,7 +667,8 @@ void main() {
         vec3 acc = vec3(0.0);
         float weightSum = 0.0;
         for (int i = 0; i < 8; i++) {
-            float phase = (float(i) + noise) / 8.0 - 0.5;
+            if (float(i) >= uTaps) break;
+            float phase = (float(i) + noise) / uTaps - 0.5;
             float w = 1.0 - abs(phase) * 0.65;
             acc += cameraAt(center + (vUv - center) * (1.0 + phase * uBlur)) * w;
             weightSum += w;

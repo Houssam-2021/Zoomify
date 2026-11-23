@@ -176,12 +176,6 @@ fun SettingsSheet(c: CameraController, onDismiss: () -> Unit) {
                         "correction. It turns the camera's own EIS and OIS off while it runs. Off = the current horizon lock.",
                     c.gyroStabilizer, c::toggleGyroStabilizer)
             }
-            if (c.mode == CaptureMode.VIDEO && c.fpsDiagnostics.isNotEmpty()) {
-                Text("Frame-rate diagnostics", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(top = 20.dp))
-                Note(c.fpsDiagnostics)
-                ActionButton("Copy diagnostics", c::copyDiagnostics)
-            }
             if (c.videoProfile == VideoProfile.LOG) {
                 Toggle("Log view assist", "Shows Log converted to Rec.709 in the viewfinder. Recordings stay Log.",
                     c.logViewAssist, c::toggleLogViewAssist)
@@ -229,6 +223,13 @@ fun SettingsSheet(c: CameraController, onDismiss: () -> Unit) {
                 color = Color.White.copy(alpha = 0.34f), fontSize = 11.sp, lineHeight = 17.sp,
                 modifier = Modifier.padding(top = 18.dp),
             )
+
+            // Last, in every mode, so testers can always find it ("Settings → Diagnostics → Copy").
+            Section("DIAGNOSTICS")
+            Note("What this phone's camera offers to MegaCam (frame rates, lenses, stabilisation). Copy it and send it " +
+                "with a bug report.")
+            if (c.fpsDiagnostics.isNotEmpty()) Note(c.fpsDiagnostics)
+            ActionButton("Copy diagnostics", c::copyDiagnostics)
         }
     }
 }

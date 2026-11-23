@@ -1207,6 +1207,7 @@ class CameraController(private val activity: ComponentActivity) {
             appendLine("EIS: ${named(resultEis, listOf("off", "on", "preview"))} · OIS: ${named(resultOis, listOf("off", "on"))}" +
                 " · horizon engine: ${if (processor.stabilizer != null) "gyro 3-axis" else if (horizonActive) "level lock" else "off"}")
             appendLine("Lenses: $lensLayoutText")
+            appendLine("Motion blur samples: ${processor.blurTaps}/8 (adapts to GPU load)")
             appendLine("Video frames drawn: ${processor.videoFrames} · clock jump at last lens switch: ${processor.lastVideoClockJumpMs?.let { "$it ms (corrected)" } ?: "none"}")
             appendLine("Lens now: ${lastPhysicalCameraId ?: "not reported"} · zoom ${resultZoomRatio?.let { "%.2f×".format(Locale.US, it) } ?: "?"} · lenses used in last recording: $lastRecordingLenses")
             append("Last recording: ${lastRecordingFps.ifEmpty { "none yet" }}")
