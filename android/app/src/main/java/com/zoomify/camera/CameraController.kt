@@ -87,14 +87,14 @@ private const val HORIZON_REORIENT_MS = 900L
 /** Unsharp-mask amount while horizon lock's ~2x crop enlarges the picture. */
 private const val CROP_SHARPEN = 0.35f
 
+/** Lens switching during a recording (see maybeHopLens). Off: CameraX's recorder froze after the rebind. */
+private const val RECORDING_LENS_SWITCH = false
+
 /**
  * Owns CameraX and implements Velora Pro's behaviour natively. All public methods run on the main thread;
  * Compose observes the state properties directly.
  */
 @OptIn(ExperimentalCamera2Interop::class)
-/** Lens switching during a recording (see maybeHopLens). Off: CameraX's recorder froze after the rebind. */
-private const val RECORDING_LENS_SWITCH = false
-
 class CameraController(private val activity: ComponentActivity) {
 
     val previewView = PreviewView(activity).apply {
