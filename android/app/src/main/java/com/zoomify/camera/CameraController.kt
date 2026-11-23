@@ -92,6 +92,9 @@ private const val CROP_SHARPEN = 0.35f
  * Compose observes the state properties directly.
  */
 @OptIn(ExperimentalCamera2Interop::class)
+/** Lens switching during a recording (see maybeHopLens). Off: CameraX's recorder froze after the rebind. */
+private const val RECORDING_LENS_SWITCH = false
+
 class CameraController(private val activity: ComponentActivity) {
 
     val previewView = PreviewView(activity).apply {
@@ -979,13 +982,13 @@ class CameraController(private val activity: ComponentActivity) {
         val next = lensFor(zoomAnimator.targetZoom)
         if (next == activeLens) return
         if (isRecording) {
-            // Only the Cinematic path draws the video itself, so only there can the frame clock be kept continuous
-            // across cameras; on the direct paths a mid-recording switch would freeze the video.
-            val effectOnVideo = ((lastSession?.effectTargets ?: 0) and CameraEffect.VIDEO_CAPTURE) != 0
-            if (!effectOnVideo) {
+            // Switching camera mid-recording froze the video on CameraX's shared preview/video stream (Galaxy A36,
+            // 1.2-beta.7/8): the recorder doesn't reconnect after the rebind. Off until MegaCam encodes the video
+            // itself; hopDuringRecording() is kept for that.
+            if (!RECORDING_LENS_SWITCH) {
                 if (!lensLockNoticeShown) {
                     lensLockNoticeShown = true
-                    toast = "Lens switching while recording needs the Cinematic video path"
+                    toast = "Stop recording to switch lens"
                 }
                 return
             }
@@ -1416,9 +1419,9 @@ class CameraController(private val activity: ComponentActivity) {
         val pending = capture.output.prepareRecording(activity, MediaStoreHelper.videoOutputOptions(activity, newName("MegaCam_")))
         val hasMic = ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
-        // Persistent: the recording survives the camera being rebound, which is how lenses are switched mid-recording.
-        val persistent = pending.asPersistentRecording()
-        val withAudio = if (micEnabled && hasMic) persistent.withAudioEnabled() else persistent
+        // A persistent recording (survives a camera rebind) is only needed for mid-recording lens switching.
+        val base = if (RECORDING_LENS_SWITCH) pending.asPersistentRecording() else pending
+        val withAudio = if (micEnabled && hasMic) base.withAudioEnabled() else base
         if (micEnabled && !hasMic) toast = "Mic permission unavailable · silent recording"
         processor.resetVideoClock()
         lensLockNoticeShown = false
