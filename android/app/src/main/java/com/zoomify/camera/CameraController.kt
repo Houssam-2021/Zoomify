@@ -71,6 +71,8 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.abs
+import kotlin.math.exp
+import kotlin.math.floor
 import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
@@ -89,6 +91,10 @@ private const val CROP_SHARPEN = 0.35f
 
 /** Lens switching during a recording (see maybeHopLens). Off: CameraX's recorder froze after the rebind. */
 private const val RECORDING_LENS_SWITCH = false
+
+/** Camera zoom requests while zooming: ~5% steps (in log space), at most one per 100 ms. */
+private val ZOOM_STEP_LOG = kotlin.math.ln(1.05f)
+private const val ZOOM_REQUEST_INTERVAL_MS = 100L
 
 /**
  * Owns CameraX and implements Velora Pro's behaviour natively. All public methods run on the main thread;
@@ -264,6 +270,7 @@ class CameraController(private val activity: ComponentActivity) {
     private var digitalZoomAllowed = false
     private var currentDigitalZoom = 1f
     private var lastHardwareZoom = -1f
+    private var lastHardwareZoomAt = 0L
     private var targetRotation = Surface.ROTATION_0
     @Volatile private var lastPhysicalCameraId: String? = null
     @Volatile private var resultZoomRatio: Float? = null
@@ -950,15 +957,37 @@ class CameraController(private val activity: ComponentActivity) {
         zoomUi.target = zoomAnimator.targetZoom
         maybeHopLens()
         val base = activeLens?.ratio ?: 1f
-        val hardware = if (hardwareAssist) (zoom / base).coerceIn(hardwareMinZoom, max(hardwareMinZoom, hardwareMaxZoom))
+        val wanted = if (hardwareAssist) (zoom / base).coerceIn(hardwareMinZoom, max(hardwareMinZoom, hardwareMaxZoom))
         else 1f
-        val digital = if (effectActive && digitalZoomAllowed) max(1f, zoom / (hardware * base)) else 1f
+        val canFill = effectActive && digitalZoomAllowed
+        val hardware = hardwareZoomFor(wanted, canFill, settled = abs(zoom - zoomAnimator.targetZoom) < zoom * 0.002f || abs(velocity) < 0.02f)
+        val digital = if (canFill) max(1f, zoom / (hardware * base)) else 1f
         currentDigitalZoom = digital
         if (!lensHopInProgress && abs(hardware - lastHardwareZoom) > hardware * 0.0005f) {
             camera?.cameraControl?.setZoomRatio(hardware)
             lastHardwareZoom = hardware
+            lastHardwareZoomAt = SystemClock.uptimeMillis()
         }
         processor.updateZoom(zoom, velocity, digital)
+    }
+
+    /**
+     * The camera zoom to request for this frame. A new zoom request on every frame (30/s while zooming) makes some
+     * cameras (Galaxy A36, tester reports) drop frames in both preview and video. When MegaCam draws the picture
+     * itself, the camera zoom moves in ~5% steps at most ~10 times a second, always at or just below the wanted
+     * zoom, and the GPU's digital zoom fills the small gap so the motion stays smooth. Zooming out past the
+     * current step, and the final resting zoom, are applied at once (the GPU can't zoom out, and the still picture
+     * must be fully optical).
+     */
+    private fun hardwareZoomFor(wanted: Float, canFill: Boolean, settled: Boolean): Float {
+        val last = lastHardwareZoom
+        if (!canFill || last <= 0f || settled || lensHopInProgress) return wanted
+        val stepped = exp(floor(ln(wanted) / ZOOM_STEP_LOG) * ZOOM_STEP_LOG).coerceIn(hardwareMinZoom, wanted)
+        return when {
+            last > wanted * 1.0005f -> stepped                                        // zooming out past the camera
+            SystemClock.uptimeMillis() - lastHardwareZoomAt < ZOOM_REQUEST_INTERVAL_MS -> last
+            else -> stepped
+        }
     }
 
     /** Which camera should serve this zoom: a separate telephoto past its native zoom, the ultra-wide below 1x. */
