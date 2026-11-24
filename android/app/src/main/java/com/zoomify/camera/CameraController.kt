@@ -303,6 +303,14 @@ class CameraController(private val activity: ComponentActivity) {
     private var pinchStartZoom = 1f
 
     private val lensSwitchCallback = object : CameraCaptureSession.CaptureCallback() {
+        override fun onCaptureProgressed(
+            session: CameraCaptureSession, request: CaptureRequest, partialResult: CaptureResult,
+        ) {
+            val ratio = partialResult.get(CaptureResult.CONTROL_ZOOM_RATIO) ?: return
+            val ts = partialResult.get(CaptureResult.SENSOR_TIMESTAMP) ?: return
+            processor.recordAppliedZoom(ts, ratio)
+        }
+
         override fun onCaptureCompleted(
             session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult,
         ) {
@@ -311,7 +319,11 @@ class CameraController(private val activity: ComponentActivity) {
             result.get(CaptureResult.SENSOR_FRAME_DURATION)?.let { resultFrameDurationNs = it }
             result.get(CaptureResult.SENSOR_EXPOSURE_TIME)?.let { resultExposureNs = it; gyroStab.exposureNs = it }
             result.get(CaptureResult.SENSOR_ROLLING_SHUTTER_SKEW)?.let { gyroStab.rollingShutterSkewNs = it }
-            result.get(CaptureResult.CONTROL_ZOOM_RATIO)?.let { gyroStab.zoomRatio = it; resultZoomRatio = it }
+            result.get(CaptureResult.CONTROL_ZOOM_RATIO)?.let { ratio ->
+                gyroStab.zoomRatio = ratio
+                resultZoomRatio = ratio
+                result.get(CaptureResult.SENSOR_TIMESTAMP)?.let { processor.recordAppliedZoom(it, ratio) }
+            }
             val eis = result.get(CaptureResult.CONTROL_VIDEO_STABILIZATION_MODE)
             resultEis = eis
             resultOis = result.get(CaptureResult.LENS_OPTICAL_STABILIZATION_MODE)
@@ -959,7 +971,8 @@ class CameraController(private val activity: ComponentActivity) {
         val base = activeLens?.ratio ?: 1f
         val wanted = if (hardwareAssist) (zoom / base).coerceIn(hardwareMinZoom, max(hardwareMinZoom, hardwareMaxZoom))
         else 1f
-        val canFill = effectActive && digitalZoomAllowed
+        // Stepped camera zoom + GPU fill only where the camera reports the zoom each frame was taken with.
+        val canFill = effectActive && digitalZoomAllowed && processor.appliedZoomReported
         val hardware = hardwareZoomFor(wanted, canFill, settled = abs(zoom - zoomAnimator.targetZoom) < zoom * 0.002f || abs(velocity) < 0.02f)
         val digital = if (canFill) max(1f, zoom / (hardware * base)) else 1f
         currentDigitalZoom = digital
@@ -968,7 +981,7 @@ class CameraController(private val activity: ComponentActivity) {
             lastHardwareZoom = hardware
             lastHardwareZoomAt = SystemClock.uptimeMillis()
         }
-        processor.updateZoom(zoom, velocity, digital)
+        processor.updateZoom(zoom, velocity, digital, wantedCameraZoom = if (canFill) zoom / base else 0f)
     }
 
     /**

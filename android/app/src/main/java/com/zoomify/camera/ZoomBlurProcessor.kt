@@ -26,6 +26,9 @@ import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.min
 
+/** How long a frame may wait for the camera to report its applied zoom before drawing anyway. */
+private const val APPLIED_ZOOM_WAIT_MS = 25L
+
 /** CameraX effect that routes the preview (and in Cinematic video, the recording) through [ZoomBlurProcessor]. */
 class ZoomBlurEffect(targets: Int, processor: ZoomBlurProcessor) :
     CameraEffect(targets, processor.executor, processor, { error -> Log.e(TAG, "Effect error", error) })
@@ -181,11 +184,51 @@ class ZoomBlurProcessor : SurfaceProcessor {
         handler.post { glReady = initGl() }
     }
 
-    fun updateZoom(zoom: Float, velocity: Float, digitalZoom: Float) {
+    fun updateZoom(zoom: Float, velocity: Float, digitalZoom: Float, wantedCameraZoom: Float = 0f) {
         this.zoom = zoom
         this.velocity = velocity
         this.digitalZoom = digitalZoom
+        this.fillWantedZoom = wantedCameraZoom
     }
+
+    /**
+     * The camera zoom wanted for the picture (zoom ÷ the lens's base), or 0 when the GPU shouldn't fill the gap to
+     * the camera's own zoom. The camera applies a new zoom a few frames after it's requested, so the fill is
+     * computed per frame from the zoom the camera reports for that very frame (recordAppliedZoom); computing it
+     * from the requested zoom made the picture wobble at every zoom step.
+     */
+    @Volatile private var fillWantedZoom = 0f
+    private val appliedTimes = LongArray(32)
+    private val appliedRatios = FloatArray(32)
+    private var appliedHead = 0
+    private var appliedCount = 0
+
+    /** True once the camera has reported the zoom it applied (CaptureResult.CONTROL_ZOOM_RATIO). */
+    @Volatile var appliedZoomReported = false
+        private set
+
+    /** Called from the camera's capture callback with each frame's sensor timestamp and applied zoom ratio. */
+    fun recordAppliedZoom(timestampNs: Long, ratio: Float) = synchronized(appliedTimes) {
+        appliedTimes[appliedHead] = timestampNs
+        appliedRatios[appliedHead] = ratio
+        appliedHead = (appliedHead + 1) % appliedTimes.size
+        if (appliedCount < appliedTimes.size) appliedCount++
+        appliedZoomReported = true
+    }
+
+    private fun appliedZoomAt(timestampNs: Long): Float? = synchronized(appliedTimes) {
+        for (i in 0 until appliedCount) {
+            val j = (appliedHead - 1 - i + appliedTimes.size) % appliedTimes.size
+            if (abs(appliedTimes[j] - timestampNs) < 2_000_000L) return appliedRatios[j]
+        }
+        null
+    }
+
+    private fun latestAppliedZoom(): Float? = synchronized(appliedTimes) {
+        if (appliedCount == 0) null else appliedRatios[(appliedHead - 1 + appliedTimes.size) % appliedTimes.size]
+    }
+
+    private var pendingFrame = 0L
 
     fun triggerLensSwitch() {
         lensSwitchAt = SystemClock.uptimeMillis()
@@ -313,6 +356,27 @@ class ZoomBlurProcessor : SurfaceProcessor {
         if (outputs.isEmpty()) return
         surfaceTexture.getTransformMatrix(textureMatrix)
         val timestamp = surfaceTexture.timestamp
+        pendingFrame = timestamp
+        renderFrame(timestamp, SystemClock.uptimeMillis())
+    }
+
+    /**
+     * Draws the latched camera frame. When the GPU fills the gap to the camera's zoom, it waits briefly (at most
+     * APPLIED_ZOOM_WAIT_MS) for the camera to report which zoom this frame was captured with.
+     */
+    private fun renderFrame(timestamp: Long, arrivedAt: Long) {
+        if (released || pendingFrame != timestamp || outputs.isEmpty()) return
+        val wanted = fillWantedZoom
+        var applied = if (wanted > 0f) appliedZoomAt(timestamp) else null
+        if (wanted > 0f && applied == null) {
+            if (SystemClock.uptimeMillis() - arrivedAt < APPLIED_ZOOM_WAIT_MS) {
+                handler.postDelayed({ renderFrame(timestamp, arrivedAt) }, 2)
+                return
+            }
+            applied = latestAppliedZoom()
+        }
+        pendingFrame = 0L
+        makeCurrent(pbuffer)
 
         // Velora's blur: strength * |d log2(zoom) / dt| * 0.07, capped at 0.23. Released a little more gently.
         val speed = abs(velocity)
@@ -323,7 +387,7 @@ class ZoomBlurProcessor : SurfaceProcessor {
         if (blur < 0.002f) blur = 0f
         frameCount++
         val seed = (frameCount % 64) * 0.618034f
-        val digital = digitalZoom
+        val digital = if (wanted > 0f && applied != null && applied > 0f) maxOf(1f, wanted / applied) else digitalZoom
         val horizon = horizonSource?.invoke(timestamp) ?: 0f
         val texDet = det2(textureMatrix)
         val warp = stabilizerWarp(timestamp, digital)
