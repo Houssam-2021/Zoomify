@@ -76,6 +76,7 @@ import kotlin.math.floor
 import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.pow
 import kotlin.math.roundToInt
 
 data class LastCapture(val uri: Uri, val isVideo: Boolean)
@@ -95,6 +96,9 @@ private const val RECORDING_LENS_SWITCH = false
 /** Camera zoom requests while zooming: ~5% steps (in log space), at most one per 100 ms. */
 private val ZOOM_STEP_LOG = kotlin.math.ln(1.05f)
 private const val ZOOM_REQUEST_INTERVAL_MS = 100L
+/** Zooming out, the camera is asked for the zoom this far ahead (s): its latency plus one request interval. */
+private const val ZOOM_OUT_LEAD_S = 0.3f
+private const val ZOOM_OUT_REQUEST_INTERVAL_MS = 66L
 
 /**
  * Owns CameraX and implements Velora Pro's behaviour natively. All public methods run on the main thread;
@@ -973,7 +977,7 @@ class CameraController(private val activity: ComponentActivity) {
         else 1f
         // Stepped camera zoom + GPU fill only where the camera reports the zoom each frame was taken with.
         val canFill = effectActive && digitalZoomAllowed && processor.appliedZoomReported
-        val hardware = hardwareZoomFor(wanted, canFill, settled = abs(zoom - zoomAnimator.targetZoom) < zoom * 0.002f || abs(velocity) < 0.02f)
+        val hardware = hardwareZoomFor(wanted, canFill, settled = abs(zoom - zoomAnimator.targetZoom) < zoom * 0.002f || abs(velocity) < 0.02f, velocity = velocity)
         val digital = if (canFill) max(1f, zoom / (hardware * base)) else 1f
         currentDigitalZoom = digital
         if (!lensHopInProgress && abs(hardware - lastHardwareZoom) > hardware * 0.0005f) {
@@ -992,15 +996,23 @@ class CameraController(private val activity: ComponentActivity) {
      * current step, and the final resting zoom, are applied at once (the GPU can't zoom out, and the still picture
      * must be fully optical).
      */
-    private fun hardwareZoomFor(wanted: Float, canFill: Boolean, settled: Boolean): Float {
+    private fun hardwareZoomFor(wanted: Float, canFill: Boolean, settled: Boolean, velocity: Float): Float {
         val last = lastHardwareZoom
         if (!canFill || last <= 0f || settled || lensHopInProgress) return wanted
-        val stepped = exp(floor(ln(wanted) / ZOOM_STEP_LOG) * ZOOM_STEP_LOG).coerceIn(hardwareMinZoom, wanted)
-        return when {
-            last > wanted * 1.0005f -> stepped                                        // zooming out past the camera
-            SystemClock.uptimeMillis() - lastHardwareZoomAt < ZOOM_REQUEST_INTERVAL_MS -> last
-            else -> stepped
+        fun stepBelow(z: Float) = exp(floor(ln(z) / ZOOM_STEP_LOG) * ZOOM_STEP_LOG).coerceIn(hardwareMinZoom, wanted)
+        val sinceLast = SystemClock.uptimeMillis() - lastHardwareZoomAt
+        if (velocity < 0f) {
+            // Zooming out: the GPU can only zoom in, so the camera must stay wider than the picture. Ask for where
+            // the zoom will be once this request has taken effect and the next one is due (camera latency + one
+            // interval), so the GPU always has room to fill and the glide keeps its spring.
+            val ahead = wanted * 2f.pow(velocity * ZOOM_OUT_LEAD_S)
+            return when {
+                last > wanted * 1.0005f -> stepBelow(ahead)                           // already too tight: now
+                last > ahead && sinceLast >= ZOOM_OUT_REQUEST_INTERVAL_MS -> stepBelow(ahead)
+                else -> last
+            }
         }
+        return if (sinceLast < ZOOM_REQUEST_INTERVAL_MS) last else stepBelow(wanted)
     }
 
     /** Which camera should serve this zoom: a separate telephoto past its native zoom, the ultra-wide below 1x. */
