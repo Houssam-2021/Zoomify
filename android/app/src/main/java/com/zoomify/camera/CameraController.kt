@@ -93,6 +93,9 @@ private const val CROP_SHARPEN = 0.35f
 /** Lens switching during a recording (see maybeHopLens). Off: CameraX's recorder froze after the rebind. */
 private const val RECORDING_LENS_SWITCH = false
 
+/** Stepped camera zoom with GPU fill while zooming (beta.13–15). Off: the zoom felt less elastic. */
+private const val STEPPED_CAMERA_ZOOM = false
+
 /** Camera zoom requests while zooming: ~5% steps (in log space), at most one per 100 ms. */
 private val ZOOM_STEP_LOG = kotlin.math.ln(1.05f)
 private const val ZOOM_REQUEST_INTERVAL_MS = 100L
@@ -975,10 +978,12 @@ class CameraController(private val activity: ComponentActivity) {
         val base = activeLens?.ratio ?: 1f
         val wanted = if (hardwareAssist) (zoom / base).coerceIn(hardwareMinZoom, max(hardwareMinZoom, hardwareMaxZoom))
         else 1f
-        // Stepped camera zoom + GPU fill only where the camera reports the zoom each frame was taken with.
-        val canFill = effectActive && digitalZoomAllowed && processor.appliedZoomReported
+        val gpuZoom = effectActive && digitalZoomAllowed
+        // Stepped camera zoom + GPU fill (beta.13–15) is off: it removed dropped frames on the Galaxy A36 but made the
+        // zoom less elastic. The camera zoom follows the spring on every frame again, as in beta.12.
+        val canFill = STEPPED_CAMERA_ZOOM && gpuZoom && processor.appliedZoomReported
         val hardware = hardwareZoomFor(wanted, canFill, settled = abs(zoom - zoomAnimator.targetZoom) < zoom * 0.002f || abs(velocity) < 0.02f, velocity = velocity)
-        val digital = if (canFill) max(1f, zoom / (hardware * base)) else 1f
+        val digital = if (gpuZoom) max(1f, zoom / (hardware * base)) else 1f
         currentDigitalZoom = digital
         if (!lensHopInProgress && abs(hardware - lastHardwareZoom) > hardware * 0.0005f) {
             camera?.cameraControl?.setZoomRatio(hardware)
